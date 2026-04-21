@@ -37,6 +37,7 @@ alias remove="sudo pacman -Rns"
 alias search="paru -Ss"
 alias orphans='pacman -Qdtq | sudo pacman -Rns - 2>/dev/null || echo "No orphans"'
 alias cleanup="sudo paccache -rk2 && paru -Sc --noconfirm"
+alias fuzzy-remove='paru -Rns $(paru -Qq | fzf --multi --preview "paru -Qi {1}")'  # search → pick → delete
 
 # ── Aliases: system ─────────────────────────────────────────────
 alias top="btop"
