@@ -41,7 +41,7 @@ dns_choice=${dns_choice:-1}
 
 if [ "$dns_choice" = "1" ]; then
     echo "[AUTO] Applying DNS override via nmcli..."
-    active_con=$(nmcli -t -f NAME con show --active | head -n 1)
+    active_con=$(nmcli -t -f NAME,TYPE con show --active | grep -E '802-11-wireless|802-3-ethernet' | head -n 1 | cut -d: -f1)
     if [ -n "$active_con" ]; then
         nmcli con mod "$active_con" ipv4.dns "127.0.0.1" ipv4.ignore-auto-dns yes
         nmcli con up "$active_con"

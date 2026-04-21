@@ -1,4 +1,5 @@
 #!/bin/bash
+cd "$(dirname "$0")" || exit 1
 
 # Revert AdGuard Home Setup
 
@@ -16,7 +17,7 @@ dns_choice=${dns_choice:-1}
 
 if [ "$dns_choice" = "1" ]; then
     echo "[AUTO] Restoring auto DNS via nmcli..."
-    active_con=$(nmcli -t -f NAME con show --active | head -n 1)
+    active_con=$(nmcli -t -f NAME,TYPE con show --active | grep -E '802-11-wireless|802-3-ethernet' | head -n 1 | cut -d: -f1)
     if [ -n "$active_con" ]; then
         nmcli con mod "$active_con" ipv4.dns "" ipv4.ignore-auto-dns no
         nmcli con up "$active_con"
@@ -35,5 +36,15 @@ else
 fi
 
 echo ""
+echo "Do you want to restore systemd-resolved to handle port 53 again?"
+read -p "Enter choice [y/N]: " restore_resolved
+if [[ "$restore_resolved" =~ ^[Yy]$ ]]; then
+    echo "[AUTO] Restoring systemd-resolved..."
+    sudo systemctl unmask systemd-resolved
+    sudo systemctl enable --now systemd-resolved
+    sudo ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+    echo "systemd-resolved restored."
+fi
+
+echo ""
 echo "Revert Complete!"
-echo "Note: if you used fix-port-53.sh in the past and wish to restore systemd-resolved on port 53, you will need to revert those changes manually."
