@@ -21,30 +21,31 @@ alias wget='firejail wget'             # sandbox outbound wget
 alias pip='python3 -m pip'             # sandbox pip installs
 
 # ── Aliases: files & navigation ─────────────────────────────────
-alias ls="eza --icons --group-directories-first"
-alias ll="eza --icons --group-directories-first -l"
-alias la="eza --icons --group-directories-first -la"
-alias tree="eza --icons --tree"
-alias cat="bat"
-alias c="clear"
-alias sizeof="du -sh"
+alias ls="eza --icons --group-directories-first"  # list files with icons
+alias ll="eza --icons --group-directories-first -l"  # long format
+alias la="eza --icons --group-directories-first -la"  # all files including hidden
+alias tree="eza --icons --tree"  # directory tree view
+alias cat="bat"  # syntax-highlighted cat
+alias c="clear"  # clear terminal
+alias sizeof="du -sh"  # show directory size
 
 # ── Aliases: package management (paru wraps pacman + AUR) ──────
-alias update="paru -Syu"
-alias install="sudo pacman -S"
-alias aur="paru -S"
-alias remove="sudo pacman -Rns"
-alias search="paru -Ss"
-alias orphans='pacman -Qdtq | sudo pacman -Rns - 2>/dev/null || echo "No orphans"'
-alias cleanup="sudo paccache -rk2 && paru -Sc --noconfirm"
-alias fuzzy-remove='paru -Rns $(paru -Qq | fzf --multi --preview "paru -Qi {1}")'  # search → pick → delete
+alias update="paru -Syu"  # full system upgrade
+alias install="sudo pacman -S"  # install from official repos
+alias aur="paru -S"  # install from AUR
+alias remove="sudo pacman -Rns"  # remove package and dependencies
+alias search="paru -Ss"  # search packages
+alias orphans='pacman -Qdtq | sudo pacman -Rns - 2>/dev/null || echo "No orphans"'  # remove unused dependencies
+alias cleanup="sudo paccache -rk2 && paru -Sc --noconfirm"  # clean package cache
+alias fuzzy-remove='paru -Rns $(paru -Qq | fzf --multi --preview "paru -Qi {1}")'  # interactive package removal
 
 # ── Aliases: system ─────────────────────────────────────────────
-alias top="btop"
-alias ff="fastfetch"
-alias logs="journalctl -b -p err"
-alias ports="ss -tuln"
-alias myip="curl -s ifconfig.me"
+alias top="btop"  # interactive process monitor
+alias ff="fastfetch"  # system info display
+alias logs="journalctl -b -p err"  # show boot error logs
+alias ports="ss -tuln"  # list listening ports
+alias myip="curl -s ifconfig.me"  # show public IP
+alias port-whisperer="bunx port-whisperer --all"  # show all active ports with process info
 
 # ── FZF ─────────────────────────────────────────────────────────
 source /usr/share/fzf/key-bindings.zsh

@@ -7,7 +7,7 @@ Everything comes from pacman. No git clones, no curl scripts, no manual font dow
 ```bash
 sudo pacman -S zsh starship ttf-jetbrains-mono-nerd \
   zsh-autosuggestions zsh-syntax-highlighting zsh-completions \
-  fzf bat eza zoxide fastfetch wl-clipboard firejail
+  fzf bat eza zoxide fastfetch wl-clipboard firejail bun
 ```
 
 
@@ -23,6 +23,7 @@ sudo pacman -S zsh starship ttf-jetbrains-mono-nerd \
 | `zsh-syntax-highlighting` | Valid commands turn green, invalid turn red                                        |
 | `wl-clipboard`            | Command-line copy/paste bridge for Wayland                                         |
 | `firejail`                | Runtime sandbox — limits what a script can do if it turns malicious                |
+| `bun`                     | Fast JavaScript package manager — required for port-whisperer                     |
 
 
 ---
