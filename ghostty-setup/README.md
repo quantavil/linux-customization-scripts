@@ -8,7 +8,7 @@ Install the native shell, GPU terminal, micro text editor, asynchronous file man
 
 ```bash
 sudo pacman -S ghostty fish yazi micro ttf-jetbrains-mono-nerd \
-  fzf bat eza zoxide fastfetch wl-clipboard firejail bun
+  fzf bat eza zoxide fastfetch wl-clipboard firejail bun tmux
 
 ```
 
@@ -79,7 +79,26 @@ micro ~/.config/fish/config.fish
 
 ```
 
-Populate this file with the complete, fully commented configuration script containing your aliases, security sandboxing, and high-performance functions (Yazi wrapper, orphans scrubber, fuzzy-remove, and pacsize utilities) generated in the previous turn.
+Populate this file with the complete, fully commented configuration script containing your aliases, security sandboxing, high-performance functions (Yazi wrapper, orphans scrubber, fuzzy-remove, and pacsize utilities), and Tmux programmatic workspace engines.
+
+### 4. Tmux Programmatic Workspace Engines
+
+The configuration registers custom tmux layouts to accelerate multi-pane terminal workflows:
+- `wd2c`: 2 columns split evenly down the middle.
+- `wd3g`: 3-pane grid (Left: `agy --dangerously-skip-permissions`, Top Right: `timr`, Bottom Right: `lowfi`).
+- `wd4g`: 4-pane balanced 2x2 grid.
+
+### 5. High-Performance Tmux Configuration (`~/.tmux.conf` or `~/.config/tmux/tmux.conf`)
+
+Deploy the configuration parameters to enable mouse support, 1-based pane and window indexing, and 24-bit True Color rendering in Ghostty:
+
+```tmux
+set -g mouse on
+set -g default-terminal "tmux-256color"
+set -as terminal-features ",xterm-256color:RGB"
+set -g base-index 1
+setw -g pane-base-index 1
+```
 
 ---
 

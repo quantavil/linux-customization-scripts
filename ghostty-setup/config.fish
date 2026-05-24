@@ -9,9 +9,11 @@ end
 # ==============================================================================
 # SECURITY SANDBOXING DEFINITIONS
 # ==============================================================================
-# Force network tools and isolated modules through containment layers
-alias curl="firejail curl"
-alias wget="firejail wget"
+# Force network tools through containment layers if firejail is installed
+if type -q firejail
+    alias curl="firejail curl"
+    alias wget="firejail wget"
+end
 alias pip="python3 -m pip"
 
 # ==============================================================================
@@ -29,16 +31,14 @@ alias c="clear"
 alias sizeof="du -sh"
 
 # ==============================================================================
-# ADVANCED PACKAGE MANAGEMENT MAPPINGS
+# PACKAGE MANAGEMENT MAPPINGS
 # ==============================================================================
-# Explicit bindings for core package system and AUR operations via Paru
+# Arch Linux Package Manager (Paru/Pacman)
 alias update="paru -Syu"
 alias install="sudo pacman -S"
 alias aur="paru -S"
 alias remove="sudo pacman -Rns"
 alias search="paru -Ss"
-
-# Purge local package delivery caches to reclaim storage spaces
 alias cleanup="sudo paccache -rk2 && paru -Sc --noconfirm"
 
 # ==============================================================================
@@ -46,10 +46,60 @@ alias cleanup="sudo paccache -rk2 && paru -Sc --noconfirm"
 # ==============================================================================
 alias top="btop"
 alias ff="fastfetch"
-alias logs="journalctl -b -p err"
 alias ports="ss -tuln"
 alias myip="curl -s ifconfig.me"
 alias port-whisperer="bunx port-whisperer --all"
+
+# Log viewer configuration
+alias logs="journalctl -b -p err"
+
+# ==============================================================================
+# TMUX ALIASES
+# ==============================================================================
+alias tk="tmux kill-session -t"
+alias ta="tmux attach -t"
+alias tl="tmux list-sessions"
+
+# ==============================================================================
+# TMUX PROGRAMMATIC WORKSPACE ENGINES (SMART RESUME CODES)
+# ==============================================================================
+
+# LAYOUT 1: 2 Columns split evenly down the middle
+function wd2c
+    if tmux has-session -t ws1 2>/dev/null
+        tmux attach-session -t ws1
+    else
+        tmux new-session -d -s ws1 ';' \
+             split-window -h -t ws1 ';' \
+             attach-session -t ws1
+    end
+end
+
+# LAYOUT 2: 3 Panes Grid (Left side is a large panel, right side is stacked)
+function wd3g
+    if tmux has-session -t ws2 2>/dev/null
+        tmux attach-session -t ws2
+    else
+        tmux new-session -d -s ws2 "agy --dangerously-skip-permissions; exec fish" ';' \
+             split-window -h -t ws2 "timr; exec fish" ';' \
+             split-window -v -t ws2 "lowfi; exec fish" ';' \
+             attach-session -t ws2
+    end
+end
+
+# LAYOUT 3: 4 Panes Grid (Balanced 2x2 grid layout)
+function wd4g
+    if tmux has-session -t ws3 2>/dev/null
+        tmux attach-session -t ws3
+    else
+        tmux new-session -d -s ws3 ';' \
+             split-window -h -t ws3 ';' \
+             split-window -h -t ws3 ';' \
+             split-window -h -t ws3 ';' \
+             select-layout -t ws3 tiled ';' \
+             attach-session -t ws3
+    end
+end
 
 # ==============================================================================
 # HIGH-PERFORMANCE LOGICAL FUNCTIONS (NATIVE FISH PIPELINES)
