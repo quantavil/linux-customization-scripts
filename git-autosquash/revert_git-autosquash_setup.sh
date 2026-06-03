@@ -1,33 +1,28 @@
 #!/bin/bash
+set -euo pipefail
 
-echo "Reverting git-autosquash setup..."
-echo
+echo "[AUTO] Stopping and disabling systemd timer..."
+if systemctl --user is-enabled git-squash-history.timer &>/dev/null; then
+    systemctl --user disable --now git-squash-history.timer
+fi
 
-# Step 1: Disable and remove systemd units
-echo "[AUTO] Disabling git-squash-history.timer..."
-systemctl --user disable --now git-squash-history.timer 2>/dev/null
-
-echo "[AUTO] Removing systemd service and timer files..."
+echo "[AUTO] Removing systemd unit files..."
 rm -f "$HOME/.config/systemd/user/git-squash-history.service"
 rm -f "$HOME/.config/systemd/user/git-squash-history.timer"
 
 echo "[AUTO] Reloading systemd daemon..."
 systemctl --user daemon-reload
 
-# Step 2: Remove the squash script
-echo "[AUTO] Removing git-squash-history.sh..."
+echo "[AUTO] Removing engine script..."
 rm -f "$HOME/.local/bin/git-squash-history.sh"
 
-# Step 3: Optionally remove config
 echo
-read -p "Delete configuration directory (~/.config/git-autosquash/)? [y/N]: " DELETE_CONFIG
-
+read -p "Delete repository configuration directory (~/.config/git-autosquash)? [y/N]: " DELETE_CONFIG
 if [[ "$DELETE_CONFIG" =~ ^[Yy]$ ]]; then
     rm -rf "$HOME/.config/git-autosquash"
-    echo "[AUTO] Configuration deleted."
+    echo "[AUTO] Configuration directory purged."
 else
-    echo "[AUTO] Configuration retained at ~/.config/git-autosquash/"
+    echo "[AUTO] Configuration directory retained."
 fi
 
-echo
 echo "Teardown complete."
