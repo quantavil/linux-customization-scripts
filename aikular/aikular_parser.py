@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import sys
 import os
+import re
 import fitz  # PyMuPDF
 from collections import Counter
 
@@ -29,9 +30,35 @@ def get_body_size(doc):
         return size_counts.most_common(1)[0][0]
     return 10.0
 
+# Module-level set for boilerplate lines detected per-document
+_boilerplate_lines = set()
+
+def detect_boilerplate(doc):
+    """
+    Scans all pages and collects text lines that appear on >40% of pages.
+    These are boilerplate headers/footers (e.g. 'Topic-Wise Bundle Course').
+    """
+    line_page_count = Counter()
+    page_count = len(doc)
+    for page in doc:
+        try:
+            blocks = page.get_text("dict").get("blocks", [])
+        except Exception:
+            continue
+        seen_on_page = set()
+        for block in blocks:
+            for line in block.get("lines", []):
+                text = "".join(s.get("text", "") for s in line.get("spans", [])).strip()
+                if text and text not in seen_on_page:
+                    seen_on_page.add(text)
+        for t in seen_on_page:
+            line_page_count[t] += 1
+    threshold = max(3, int(page_count * 0.4))
+    return {t for t, c in line_page_count.items() if c >= threshold}
+
 def is_watermark_text(text):
     """
-    Checks if the text looks like a watermark (email, URL, brand info, or copyright notice).
+    Checks if the text looks like a watermark, boilerplate, or noise.
     """
     t_lower = text.lower().strip()
     if not t_lower:
@@ -40,24 +67,28 @@ def is_watermark_text(text):
         return True
     if "www." in t_lower or "http" in t_lower or ".in" in t_lower or ".com" in t_lower or ".org" in t_lower or ".net" in t_lower:
         return True
-    # Common watermark terms (specifically targets Guidely PDF watermarks)
     watermark_keywords = [
         "subscribe", "subscription", "telegram", "guidely",
-        "mock test", "all in one", "pdf course"
+        "mock test", "all in one", "pdf course", "topic-wise"
     ]
     if any(keyword in t_lower for keyword in watermark_keywords):
+        return True
+    # Page X Of Y pattern
+    if re.match(r"^page\s+\d+\s+of\s+\d+$", t_lower):
+        return True
+    # Check against document-level boilerplate
+    if text.strip() in _boilerplate_lines:
         return True
     return False
 
 def find_heading_in_block(block, body_size):
     """
-    Scans a block for a single heading line. Returns the joined text of the heading line if found, else None.
+    Scans a block for a heading by font size. Returns text if found, else None.
     """
     for line in block.get("lines", []):
         line_spans = line.get("spans", [])
         if not line_spans:
             continue
-            
         max_size = max(span.get("size", 0.0) for span in line_spans)
         if round(max_size, 1) > body_size + 2.5:
             heading_text = "".join(span.get("text", "") for span in line_spans).strip()
@@ -65,11 +96,37 @@ def find_heading_in_block(block, body_size):
                 return heading_text
     return None
 
+def find_first_bold_line(blocks, body_size):
+    """
+    Fallback: returns the first bold line on a page that isn't watermark/boilerplate.
+    Used when no size-based heading is found (uniform-font PDFs).
+    """
+    for block in blocks:
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            spans = line.get("spans", [])
+            if not spans:
+                continue
+            text = "".join(s.get("text", "") for s in spans).strip()
+            if len(text) < 4 or is_watermark_text(text):
+                continue
+            total = sum(len(s.get("text", "")) for s in spans)
+            bold = sum(
+                len(s.get("text", "")) for s in spans
+                if "bold" in s.get("font", "").lower() or (s.get("flags", 0) & 16)
+            )
+            if total > 0 and bold / total > 0.7:
+                return text
+    return None
+
 def extract_metadata_and_toc(doc, body_size):
     """
     Extracts basic document metadata and generates a table of contents outline.
     """
     title = doc.metadata.get("title") or "Untitled Document"
+    # Clean underscored metadata titles
+    title = title.replace("_", " ").strip()
     author = doc.metadata.get("author") or "Unknown Author"
     page_count = len(doc)
     
@@ -86,7 +143,7 @@ def extract_metadata_and_toc(doc, body_size):
             indent = "  " * (lvl - 1)
             toc_lines.append(f"{indent}- [Page {pno}] {title_text}")
     else:
-        # Fallback to font size heuristic
+        # Fallback: try font-size heading first, then bold line
         for page_num in range(1, page_count + 1):
             page = doc[page_num - 1]
             try:
@@ -94,11 +151,15 @@ def extract_metadata_and_toc(doc, body_size):
             except Exception as e:
                 print(f"Warning: Failed to retrieve text dict for TOC heuristic: {e}", file=sys.stderr)
                 continue
+            heading_text = None
             for block in blocks:
                 heading_text = find_heading_in_block(block, body_size)
                 if heading_text:
-                    toc_lines.append(f"- [Page {page_num}] {heading_text}")
-                    break  # Move to the next page once one heading is found
+                    break
+            if not heading_text:
+                heading_text = find_first_bold_line(blocks, body_size)
+            if heading_text:
+                toc_lines.append(f"- [Page {page_num}] {heading_text}")
                         
     return title, author, page_count, toc_lines
 
@@ -263,6 +324,10 @@ def parse_pdf(pdf_path, output_dir):
     with doc:
         page_count = len(doc)
         body_size = get_body_size(doc)
+        
+        # Detect boilerplate lines across the document
+        global _boilerplate_lines
+        _boilerplate_lines = detect_boilerplate(doc)
         
         # 4. Generate outline.md
         title, author, _, toc_lines = extract_metadata_and_toc(doc, body_size)
