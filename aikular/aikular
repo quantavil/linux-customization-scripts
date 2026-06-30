@@ -1,6 +1,9 @@
 #!/bin/bash
 set -eo pipefail
 
+CONFIG_DIR="$HOME/.config/aikular"
+CONFIG_FILE="$CONFIG_DIR/backend"
+
 # Helper function to print to stderr and exit
 error_exit() {
     echo "Error: $1" >&2
@@ -18,6 +21,19 @@ notify() {
     fi
 }
 
+# Read current backend (default: agy)
+get_backend() {
+    if [[ -f "$CONFIG_FILE" ]]; then
+        local val
+        val=$(tr -d '[:space:]' < "$CONFIG_FILE" || echo "agy")
+        if [[ "$val" == "opencode" || "$val" == "agy" ]]; then
+            echo "$val"
+            return
+        fi
+    fi
+    echo "agy"
+}
+
 # Check for essential utility tools
 for tool in python3 realpath md5sum cut dirname basename setsid; do
     if ! command -v "$tool" >/dev/null 2>&1; then
@@ -27,26 +43,47 @@ done
 
 # Parse arguments
 REFRESH=false
-if [[ "${1:-}" == "--refresh" ]]; then
-    REFRESH=true
-    shift
-elif [[ "${1:-}" == "--clean" ]]; then
-    shift
-    # Determine clean script path dynamically or fallback
-    CLEAN_SCRIPT="${BASH_SOURCE[0]%/*}/aikular-clean"
-    if [[ ! -f "$CLEAN_SCRIPT" ]]; then
-        CLEAN_SCRIPT="$HOME/.local/bin/aikular-clean"
-    fi
-    if [[ -f "$CLEAN_SCRIPT" ]]; then
-        exec "$CLEAN_SCRIPT" "$@"
-    else
+case "${1:-}" in
+    --refresh)
+        REFRESH=true
+        shift
+        ;;
+    --clean)
+        shift
+        CLEAN_SCRIPT="${BASH_SOURCE[0]%/*}/aikular-clean"
+        [[ ! -f "$CLEAN_SCRIPT" ]] && CLEAN_SCRIPT="$HOME/.local/bin/aikular-clean"
+        [[ -f "$CLEAN_SCRIPT" ]] && exec "$CLEAN_SCRIPT" "$@"
         error_exit "Cleanup script not found."
-    fi
-fi
+        ;;
+    --switch)
+        CURRENT=$(get_backend)
+        if [[ "$CURRENT" == "agy" ]]; then
+            NEW="opencode"
+        else
+            NEW="agy"
+        fi
+        mkdir -p "$CONFIG_DIR"
+        echo "$NEW" > "$CONFIG_FILE"
+        echo "Aikular backend switched: $CURRENT → $NEW"
+        exit 0
+        ;;
+    --backend)
+        echo "Current backend: $(get_backend)"
+        exit 0
+        ;;
+esac
 
 PDF_PATH="${1:-}"
 if [[ -z "$PDF_PATH" ]]; then
-    echo "Usage: aikular [--refresh | --clean] <pdf_path>" >&2
+    cat >&2 <<EOF
+Usage: aikular [options] <pdf_path>
+
+Options:
+  --refresh    Force re-parse (clear cache first)
+  --clean      Clean cache for a PDF or directory
+  --switch     Toggle backend between agy and opencode
+  --backend    Show current backend
+EOF
     exit 1
 fi
 
@@ -65,7 +102,6 @@ fi
 if [[ -w "$PDF_DIR" ]]; then
     OUTPUT_DIR="$PDF_DIR/.aikular/$PDF_STEM"
 else
-    # Fallback to /tmp on read-only folders
     DIR_HASH=$(echo -n "$PDF_DIR" | md5sum | cut -d' ' -f1 | cut -c1-8)
     OUTPUT_DIR="/tmp/aikular-${USER}/${PDF_STEM}-${DIR_HASH}"
 fi
@@ -97,8 +133,11 @@ if [[ ! -f "$CONTEXT_PATH" ]]; then
     fi
 fi
 
+# Determine which AI backend to use
+BACKEND=$(get_backend)
+
 # Validate UI/Terminal dependencies
-for tool in okular ghostty fish agy; do
+for tool in okular ghostty fish "$BACKEND"; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         error_exit "Required application '$tool' is not installed or not in PATH."
     fi
@@ -107,14 +146,19 @@ done
 # Spawn Okular detached
 setsid okular "$ABS_PDF_PATH" >/dev/null 2>&1 &
 
-# Seed prompt for agy
+# Seed prompt
 SEED_PROMPT="You are analyzing the PDF: $PDF_NAME.
 Document map: $OUTLINE_PATH — read this FIRST.
 Full content: $CONTEXT_PATH (pages separated by <!-- page: N --> markers).
 The PDF is open in Okular for visual reference.
 Always cite [Page N] when answering."
 
-# Launch Ghostty with safe env passing to avoid quoting issues in fish -c
-notify "Ready" "Okular + agy session started"
+# Launch Ghostty with the selected backend
+notify "Ready" "Okular + $BACKEND session started"
 export SEED_PROMPT
-ghostty --title="aikular: $PDF_STEM" --working-directory="$PDF_DIR" -e fish -c 'agy --dangerously-skip-permissions -i "$SEED_PROMPT"'
+
+if [[ "$BACKEND" == "opencode" ]]; then
+    ghostty --title="aikular: $PDF_STEM" --working-directory="$PDF_DIR" -e fish -c "opencode -p \"\$SEED_PROMPT\""
+else
+    ghostty --title="aikular: $PDF_STEM" --working-directory="$PDF_DIR" -e fish -c 'agy --dangerously-skip-permissions -i "$SEED_PROMPT"'
+fi

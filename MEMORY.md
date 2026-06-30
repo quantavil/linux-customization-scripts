@@ -7,6 +7,7 @@ A collection of modular, independent scripts, configurations, and automation too
 ```
 /home/quantavil/Documents/Project/linux-customization-scripts/
 ├── adguard-home/         # AdGuard Home DNS server installer and configs
+├── aikular/              # Okular & AI PDF analysis pipeline (switchable agy/opencode backends)
 ├── browser-shortcuts/    # Custom web browser shortcut mappings
 ├── bt/                   # Bluetooth connection automation utilities
 ├── copyparty/            # Copyparty media/file server setups

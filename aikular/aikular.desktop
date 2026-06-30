@@ -6,6 +6,6 @@ Actions=OpenAikular;
 X-KDE-Priority=TopLevel
 
 [Desktop Action OpenAikular]
-Name=Open with Aikular (Okular & agy)
+Name=Open with Aikular
 Icon=okular
 Exec=/home/quantavil/.local/bin/aikular %f

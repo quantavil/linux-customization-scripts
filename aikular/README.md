@@ -1,6 +1,6 @@
-# Aikular: Okular & agy PDF Analysis Pipeline
+# Aikular: Okular & AI PDF Analysis Pipeline
 
-Aikular is a local productivity pipeline that integrates the **Okular** PDF reader with the CLI AI assistant **agy** (`antigravity-cli`). It allows you to right-click any PDF in Dolphin (or launch it from the terminal), automatically extracting structural page text and formatting tables into clean Markdown while stripping out repeating promotional watermarks, email stamps, and branding links. It opens Okular for visual reference side-by-side with a new **Ghostty** terminal running `agy` pre-seeded with the document context map.
+Aikular is a local productivity pipeline that integrates the **Okular** PDF reader with CLI AI assistants like **agy** (`antigravity-cli`) or **opencode**. It allows you to right-click any PDF in Dolphin (or launch it from the terminal), automatically extracting structural page text and formatting tables into clean Markdown while stripping out repeating promotional watermarks, email stamps, and branding links. It opens Okular for visual reference side-by-side with a new **Ghostty** terminal running the selected AI assistant (pre-seeded with the document context map).
 
 ---
 
@@ -64,8 +64,8 @@ kbuildsycoca6
 ### A. Graphical Use (Dolphin)
 1. Open the **Dolphin** file manager.
 2. Right-click any PDF file.
-3. Select **Open with Aikular (Okular & agy)** from the context menu.
-4. Okular will launch in the background, and Ghostty will launch a terminal pre-seeded with `agy` connected directly to your parsed PDF context.
+3. Select **Open with Aikular** from the context menu.
+4. Okular will launch in the background, and Ghostty will launch a terminal pre-seeded with the selected AI assistant (default: `agy`) connected directly to your parsed PDF context.
 
 ### B. Terminal Use (Fish Shell)
 You can run the pipeline directly from your terminal:
@@ -135,3 +135,17 @@ If you deploy these scripts on another system, make sure the absolute path insid
 Exec=/home/<your_username>/.local/bin/aikular %f
 ```
 *(Open `aikular.desktop` and replace `/home/quantavil/` with your user's home path).*
+
+### 4. Switch AI Backend (agy vs. opencode)
+Aikular supports switching between `agy` and `opencode` backends. By default, it uses `agy`.
+
+To see the current backend:
+```bash
+aikular --backend
+```
+
+To toggle/switch the backend:
+```bash
+aikular --switch
+```
+This configuration is saved in `~/.config/aikular/backend`.
