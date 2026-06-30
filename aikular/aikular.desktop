@@ -8,4 +8,4 @@ X-KDE-Priority=TopLevel
 [Desktop Action OpenAikular]
 Name=Open with Aikular (Okular & agy)
 Icon=okular
-Exec=/home/quantavil/.local/bin/aikular.sh %f
+Exec=/home/quantavil/.local/bin/aikular %f

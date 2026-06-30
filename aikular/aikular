@@ -27,14 +27,26 @@ done
 
 # Parse arguments
 REFRESH=false
-if [[ "$1" == "--refresh" ]]; then
+if [[ "${1:-}" == "--refresh" ]]; then
     REFRESH=true
     shift
+elif [[ "${1:-}" == "--clean" ]]; then
+    shift
+    # Determine clean script path dynamically or fallback
+    CLEAN_SCRIPT="${BASH_SOURCE[0]%/*}/aikular-clean"
+    if [[ ! -f "$CLEAN_SCRIPT" ]]; then
+        CLEAN_SCRIPT="$HOME/.local/bin/aikular-clean"
+    fi
+    if [[ -f "$CLEAN_SCRIPT" ]]; then
+        exec "$CLEAN_SCRIPT" "$@"
+    else
+        error_exit "Cleanup script not found."
+    fi
 fi
 
-PDF_PATH="$1"
+PDF_PATH="${1:-}"
 if [[ -z "$PDF_PATH" ]]; then
-    echo "Usage: aikular.sh [--refresh] <pdf_path>" >&2
+    echo "Usage: aikular [--refresh | --clean] <pdf_path>" >&2
     exit 1
 fi
 

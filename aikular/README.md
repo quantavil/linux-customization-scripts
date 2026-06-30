@@ -10,9 +10,9 @@ This folder contains all the self-contained components of the Aikular pipeline:
 
 ```
 linux-customization-scripts/aikular/
-├── aikular.sh        # Launcher orchestrator script
+├── aikular           # Launcher orchestrator script (and clean redirector)
 ├── aikular_parser.py # PDF-to-Markdown parser & watermark filter
-├── aikular-clean.sh  # Cache cleanup script
+├── aikular-clean     # Cache cleanup script
 ├── aikular.desktop   # Dolphin right-click context menu integration
 └── README.md         # This manual
 ```
@@ -23,28 +23,35 @@ linux-customization-scripts/aikular/
 
 Follow these steps to install and register Aikular on your Arch/CachyOS system:
 
-### 1. Copy Files to Local System Paths
+### 1. Ensure `~/.local/bin` is in your Fish PATH
+If your terminal reports `unknown command: aikular`, add your local bin directory to your Fish search path:
+```bash
+fish_add_path ~/.local/bin
+```
+*(This command is built into Fish and persistently updates your search path across terminal sessions and system restarts).*
+
+### 2. Copy Files to Local System Paths
 The scripts must be copied to your local user executable path (`~/.local/bin/`), and the KIO action must be copied to the KDE service menus configuration folder (`~/.local/share/kio/servicemenus/`):
 
 ```bash
 # Copy executable scripts
-cp aikular.sh aikular_parser.py aikular-clean.sh ~/.local/bin/
+cp aikular aikular_parser.py aikular-clean ~/.local/bin/
 
 # Copy Dolphin context menu integration
 mkdir -p ~/.local/share/kio/servicemenus/
 cp aikular.desktop ~/.local/share/kio/servicemenus/
 ```
 
-### 2. Grant Executable Permissions
+### 3. Grant Executable Permissions
 Grant execute privileges to all deployed scripts:
 ```bash
-chmod +x ~/.local/bin/aikular.sh
+chmod +x ~/.local/bin/aikular
 chmod +x ~/.local/bin/aikular_parser.py
-chmod +x ~/.local/bin/aikular-clean.sh
+chmod +x ~/.local/bin/aikular-clean
 chmod +x ~/.local/share/kio/servicemenus/aikular.desktop
 ```
 
-### 3. Rebuild KDE Sycoca Cache
+### 4. Rebuild KDE Sycoca Cache
 Instruct KDE Plasma 6 to reload Dolphin service menus so the right-click option appears immediately without logging out:
 ```bash
 kbuildsycoca6
@@ -63,21 +70,29 @@ kbuildsycoca6
 ### B. Terminal Use (Fish Shell)
 You can run the pipeline directly from your terminal:
 ```bash
-# General usage
-aikular.sh /path/to/document.pdf
+# General usage (runs parsing if needed, opens Okular + Ghostty terminal)
+aikular /path/to/document.pdf
 
 # Force re-parse (bypass existing cache and re-extract text/tables)
-aikular.sh --refresh /path/to/document.pdf
+aikular --refresh /path/to/document.pdf
 ```
 
 ### C. Cleaning the Cache
-The parsed text caches are saved to speed up subsequent launches. If you want to delete these caches to free up space:
+The parsed text caches are saved to speed up subsequent launches. You can delete these caches to free up space in two ways:
+
+Using the main wrapper command:
 ```bash
 # Clean cache for a single PDF
-aikular-clean.sh /path/to/document.pdf
+aikular --clean /path/to/document.pdf
+```
+
+Or calling the cleanup script directly:
+```bash
+# Clean cache for a single PDF
+aikular-clean /path/to/document.pdf
 
 # Clean all cache subfolders in a folder
-aikular-clean.sh /path/to/directory/
+aikular-clean /path/to/directory/
 ```
 
 ---
@@ -104,7 +119,7 @@ def is_watermark_text(text):
 *Note: Any line matching these keywords will be completely removed from `context.md` to optimize LLM context window space.*
 
 ### 2. Agy Prompt Customization
-To change the instructions given to the AI when a session starts, modify the `SEED_PROMPT` variable inside `aikular.sh`:
+To change the instructions given to the AI when a session starts, modify the `SEED_PROMPT` variable inside `aikular`:
 
 ```bash
 SEED_PROMPT="You are analyzing the PDF: $PDF_NAME.
@@ -117,6 +132,6 @@ Always cite [Page N] when answering."
 ### 3. Change System Username / Hardcoded Paths
 If you deploy these scripts on another system, make sure the absolute path inside `aikular.desktop` points to your correct user directory:
 ```ini
-Exec=/home/<your_username>/.local/bin/aikular.sh %f
+Exec=/home/<your_username>/.local/bin/aikular %f
 ```
 *(Open `aikular.desktop` and replace `/home/quantavil/` with your user's home path).*
