@@ -158,7 +158,7 @@ notify "Ready" "Okular + $BACKEND session started"
 export SEED_PROMPT
 
 if [[ "$BACKEND" == "opencode" ]]; then
-    ghostty --title="aikular: $PDF_STEM" --working-directory="$PDF_DIR" -e fish -c "opencode -p \"\$SEED_PROMPT\""
+    ghostty --title="aikular: $PDF_STEM" --working-directory="$PDF_DIR" -e fish -c "opencode --prompt \"\$SEED_PROMPT\""
 else
     ghostty --title="aikular: $PDF_STEM" --working-directory="$PDF_DIR" -e fish -c 'agy --dangerously-skip-permissions -i "$SEED_PROMPT"'
 fi
