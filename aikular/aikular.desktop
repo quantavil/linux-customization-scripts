@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Service
+Name=Aikular PDF Integration
+MimeType=application/pdf;
+Actions=OpenAikular;
+X-KDE-Priority=TopLevel
+
+[Desktop Action OpenAikular]
+Name=Open with Aikular (Okular & agy)
+Icon=okular
+Exec=/home/quantavil/.local/bin/aikular.sh %f

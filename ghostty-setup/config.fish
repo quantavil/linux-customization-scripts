@@ -1,7 +1,7 @@
 # ==============================================================================
 # NATIVE INTERACTIVE SHELL INITIALIZATION
 # ==============================================================================
-if status is-interactive    
+if status is-interactive
     # Initialize frecency-based directory tracker
     zoxide init fish | source
 end
@@ -34,7 +34,8 @@ alias sizeof="du -sh"
 # PACKAGE MANAGEMENT MAPPINGS
 # ==============================================================================
 # Arch Linux Package Manager (Paru/Pacman)
-alias update="paru -Syu"
+alias update="sudo pacman -Syu"
+alias aur-update="paru -Sua --ignore linux-cachyos,linux-cachyos-headers,linux-cachyos-lts,linux-cachyos-lts-headers"
 alias install="sudo pacman -S"
 alias aur="paru -S"
 alias remove="sudo pacman -Rns"
@@ -70,8 +71,8 @@ function wd2c
         tmux attach-session -t ws1
     else
         tmux new-session -d -s ws1 ';' \
-             split-window -h -t ws1 ';' \
-             attach-session -t ws1
+            split-window -h -t ws1 ';' \
+            attach-session -t ws1
     end
 end
 
@@ -81,9 +82,9 @@ function wd3g
         tmux attach-session -t ws2
     else
         tmux new-session -d -s ws2 "agy --dangerously-skip-permissions; exec fish" ';' \
-             split-window -h -t ws2 "timr; exec fish" ';' \
-             split-window -v -t ws2 "lowfi; exec fish" ';' \
-             attach-session -t ws2
+            split-window -h -t ws2 "timr; exec fish" ';' \
+            split-window -v -t ws2 "lowfi; exec fish" ';' \
+            attach-session -t ws2
     end
 end
 
@@ -93,11 +94,11 @@ function wd4g
         tmux attach-session -t ws3
     else
         tmux new-session -d -s ws3 ';' \
-             split-window -h -t ws3 ';' \
-             split-window -h -t ws3 ';' \
-             split-window -h -t ws3 ';' \
-             select-layout -t ws3 tiled ';' \
-             attach-session -t ws3
+            split-window -h -t ws3 ';' \
+            split-window -h -t ws3 ';' \
+            split-window -h -t ws3 ';' \
+            select-layout -t ws3 tiled ';' \
+            attach-session -t ws3
     end
 end
 
@@ -123,7 +124,7 @@ end
 # Arrays are verified natively via state checkers before firing actions
 function orphans
     set -l list (pacman -Qdtq)
-    if set -q list[1]
+    if test -n "$list"
         sudo pacman -Rns $list
     else
         echo "No orphans found"
@@ -134,7 +135,7 @@ end
 # Prevents execution errors if lookups are cancelled early via escape keys
 function fuzzy-remove
     set -l targets (paru -Qq | fzf --multi --preview "paru -Qi {1}")
-    if set -q targets[1]
+    if test -n "$targets"
         paru -Rns $targets
     end
 end
