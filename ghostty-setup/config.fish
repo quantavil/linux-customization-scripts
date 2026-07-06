@@ -35,12 +35,12 @@ alias sizeof="du -sh"
 # ==============================================================================
 # Arch Linux Package Manager (Paru/Pacman)
 alias update="sudo pacman -Syu"
-alias aur-update="paru -Sua --ignore linux-cachyos,linux-cachyos-headers,linux-cachyos-lts,linux-cachyos-lts-headers"
 alias install="sudo pacman -S"
 alias aur="paru -S"
 alias remove="sudo pacman -Rns"
 alias search="paru -Ss"
 alias cleanup="sudo paccache -rk2 && paru -Sc --noconfirm"
+alias tg="topgrade"
 
 # ==============================================================================
 # SYSTEM INSPECTION AND METRIC WRAPPERS

@@ -7,6 +7,7 @@ A configuration and deployment repository for setting up a high-performance term
 ```
 /home/quantavil/Documents/Project/linux-customization-scripts/ghostty-setup/
 ├── config.fish     # Fish shell configuration file (aliases, tmux layouts, functions)
+├── topgrade.toml   # Topgrade system updater configuration (Arch/paru, flatpak, custom scripts)
 ├── README.md       # Deployment and installation guide for the Ghostty + Fish environment
 └── MEMORY.md       # Project memory and history
 ```
@@ -16,7 +17,7 @@ A configuration and deployment repository for setting up a high-performance term
 - **Readability**: Code sections are clearly demarcated using header banners and comments.
 
 ## Dependencies & Setup
-- Core: `fish`, `ghostty`, `yazi`, `btop`, `fastfetch`
+- Core: `fish`, `ghostty`, `yazi`, `btop`, `fastfetch`, `topgrade`
 - Optional: `firejail` (security containment), `paru`/`pacman` (package management, Arch Linux only)
 
 ## Critical Information

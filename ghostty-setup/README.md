@@ -8,7 +8,7 @@ Install the native shell, GPU terminal, micro text editor, asynchronous file man
 
 ```bash
 sudo pacman -S ghostty fish yazi micro ttf-jetbrains-mono-nerd \
-  fzf bat eza zoxide fastfetch wl-clipboard firejail bun tmux
+  fzf bat eza zoxide fastfetch wl-clipboard firejail bun tmux topgrade
 
 ```
 
@@ -98,6 +98,14 @@ set -g default-terminal "tmux-256color"
 set -as terminal-features ",xterm-256color:RGB"
 set -g base-index 1
 setw -g pane-base-index 1
+```
+
+### 6. Topgrade System Updater (`~/.config/topgrade.toml`)
+
+Deploy the Topgrade configuration to automate system-wide updates (Arch packages via paru, flatpak, custom scripts):
+
+```bash
+cp topgrade.toml ~/.config/topgrade.toml
 ```
 
 ---
