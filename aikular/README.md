@@ -1,151 +1,158 @@
 # Aikular: Okular & AI PDF Analysis Pipeline
 
-Aikular is a local productivity pipeline that integrates the **Okular** PDF reader with CLI AI assistants like **agy** (`antigravity-cli`) or **opencode**. It allows you to right-click any PDF in Dolphin (or launch it from the terminal), automatically extracting structural page text and formatting tables into clean Markdown while stripping out repeating promotional watermarks, email stamps, and branding links. It opens Okular for visual reference side-by-side with a new **Ghostty** terminal running the selected AI assistant (pre-seeded with the document context map).
+Aikular is a local productivity pipeline that pairs the **Okular** PDF reader with CLI AI assistants like **agy** (`antigravity-cli`) or **opencode**. Right-click any PDF in Dolphin (or launch from the terminal) and it extracts structural page text into clean Markdown, formats tables, and strips repeating promotional watermarks, email stamps and branding links.
+
+Crucially, `agy` and `opencode` can read **images** directly but cannot read PDFs. So for any page that carries visual information (a figure, chart, table image, scanned page, or a chart drawn as vector paths), Aikular renders a PNG and drops its absolute path into `context.md`. The AI reads that PNG with its own image-read tool. No OCR needed: a multimodal backend reading the page render *is* OCR, plus diagram and chart comprehension for free.
+
+Okular opens for human reference side-by-side with a **Ghostty** terminal running the selected AI assistant, pre-seeded with the document context map.
 
 ---
 
-## 📂 File Directory
+## How the visual handling works
 
-This folder contains all the self-contained components of the Aikular pipeline:
+During parsing, each page is classified:
+
+- **text** — enough extractable text, no significant figure. Text only, no render.
+- **has_figure** — good text *and* a large raster image or a dense vector drawing. Text plus a rendered PNG.
+- **visual** — little or no extractable text (scan or full-page figure). Rendered PNG, flagged so the AI reads the image instead of assuming the page is empty.
+
+A page is rendered when any of these hold: extractable characters `< 25`, a single raster image covers `> 12%` of the page, or the page has `>= 25` vector drawing ops. Renders are capped at a 1800 px long edge to keep image-token cost sane, and cached under `<cache>/images/page_NNN.png`.
+
+In `context.md` each page is tagged, e.g.:
 
 ```
-linux-customization-scripts/aikular/
-├── aikular           # Launcher orchestrator script (and clean redirector)
-├── aikular_parser.py # PDF-to-Markdown parser & watermark filter
-├── aikular-clean     # Cache cleanup script
+<!-- page: 12 | visual | chars=6 raster=1 draw=54 -->
+```
+
+and visual pages carry an absolute PNG path the backend opens directly.
+
+---
+
+## File Directory
+
+```
+aikular/
+├── aikular           # Launcher orchestrator (Bash)
+├── aikular_parser.py # PDF-to-Markdown parser, watermark filter, page renderer
+├── aikular-clean     # Cache cleanup (Bash)
 ├── aikular.desktop   # Dolphin right-click context menu integration
 └── README.md         # This manual
 ```
 
 ---
 
-## 🚀 System Installation
-
-Follow these steps to install and register Aikular on your Arch/CachyOS system:
+## System Installation
 
 ### 1. Ensure `~/.local/bin` is in your Fish PATH
-If your terminal reports `unknown command: aikular`, add your local bin directory to your Fish search path:
 ```bash
 fish_add_path ~/.local/bin
 ```
-*(This command is built into Fish and persistently updates your search path across terminal sessions and system restarts).*
 
-### 2. Copy Files to Local System Paths
-The scripts must be copied to your local user executable path (`~/.local/bin/`), and the KIO action must be copied to the KDE service menus configuration folder (`~/.local/share/kio/servicemenus/`):
-
+### 2. Install the PyMuPDF dependency
+The parser needs PyMuPDF (imports as `fitz`):
 ```bash
-# Copy executable scripts
-cp aikular aikular_parser.py aikular-clean ~/.local/bin/
+# Arch / CachyOS
+sudo pacman -S python-pymupdf
+# or, per-user
+pip install --user pymupdf
+```
 
-# Copy Dolphin context menu integration
+### 3. Copy files to local paths
+```bash
+cp aikular aikular_parser.py aikular-clean ~/.local/bin/
 mkdir -p ~/.local/share/kio/servicemenus/
 cp aikular.desktop ~/.local/share/kio/servicemenus/
 ```
 
-### 3. Grant Executable Permissions
-Grant execute privileges to all deployed scripts:
+### 4. Grant executable permissions
 ```bash
-chmod +x ~/.local/bin/aikular
-chmod +x ~/.local/bin/aikular_parser.py
-chmod +x ~/.local/bin/aikular-clean
+chmod +x ~/.local/bin/aikular ~/.local/bin/aikular_parser.py ~/.local/bin/aikular-clean
 chmod +x ~/.local/share/kio/servicemenus/aikular.desktop
 ```
 
-### 4. Rebuild KDE Sycoca Cache
-Instruct KDE Plasma 6 to reload Dolphin service menus so the right-click option appears immediately without logging out:
+### 5. Rebuild the KDE Sycoca cache
 ```bash
 kbuildsycoca6
 ```
 
 ---
 
-## 📖 How to Use
+## How to Use
 
-### A. Graphical Use (Dolphin)
-1. Open the **Dolphin** file manager.
-2. Right-click any PDF file.
-3. Select **Open with Aikular** from the context menu.
-4. Okular will launch in the background, and Ghostty will launch a terminal pre-seeded with the selected AI assistant (default: `agy`) connected directly to your parsed PDF context.
+### A. Graphical (Dolphin)
+Right-click any PDF, choose **Open with Aikular**. Okular launches in the background; Ghostty launches a terminal running the selected backend, connected to your parsed context.
 
-### B. Terminal Use (Fish Shell)
-You can run the pipeline directly from your terminal:
+### B. Terminal (Fish shell)
 ```bash
-# General usage (runs parsing if needed, opens Okular + Ghostty terminal)
+# Standard: parse if needed, render only visual pages, open Okular + terminal
 aikular /path/to/document.pdf
 
-# Force re-parse (bypass existing cache and re-extract text/tables)
+# Force re-parse (clears cache first)
 aikular --refresh /path/to/document.pdf
+
+# Render EVERY page to PNG (lets the AI eyeball any page)
+aikular --images /path/to/document.pdf
+
+# Skip all rendering (text only, smallest cache)
+aikular --no-images /path/to/document.pdf
 ```
 
-### C. Cleaning the Cache
-The parsed text caches are saved to speed up subsequent launches. You can delete these caches to free up space in two ways:
+Changing `--images` / `--no-images` on an already-cached PDF requires `--refresh` to take effect.
 
-Using the main wrapper command:
+### C. Cleaning the cache
 ```bash
-# Clean cache for a single PDF
 aikular --clean /path/to/document.pdf
-```
-
-Or calling the cleanup script directly:
-```bash
-# Clean cache for a single PDF
+# or directly
 aikular-clean /path/to/document.pdf
-
-# Clean all cache subfolders in a folder
-aikular-clean /path/to/directory/
+aikular-clean /path/to/directory/     # cleans all .aikular subfolders
 ```
 
 ---
 
-## 🔧 How to Configure
+## How to Configure
 
-You can customize Aikular's behavior by modifying the scripts. Here is what you can adjust:
-
-### 1. Watermark & Branding Filters
-If you encounter new watermark strings or other promotional noise in your study PDFs, edit the `is_watermark_text(text)` function inside `aikular_parser.py`:
-
+### 1. Watermark & branding filters
+Add new promotional strings to `WATERMARK_KEYWORDS` in `aikular_parser.py`:
 ```python
-def is_watermark_text(text):
-    t_lower = text.lower().strip()
-    # Add new keywords here (e.g. "my-custom-watermark")
-    watermark_keywords = [
-        "subscribe", "subscription", "telegram", "guidely",
-        "mock test", "all in one", "pdf course", "my-custom-watermark"
-    ]
-    if any(keyword in t_lower for keyword in watermark_keywords):
-        return True
-    return False
+WATERMARK_KEYWORDS = (
+    "subscribe", "subscription", "telegram", "guidely",
+    "mock test", "all in one", "pdf course", "topic-wise",
+    "my-custom-watermark",
+)
 ```
-*Note: Any line matching these keywords will be completely removed from `context.md` to optimize LLM context window space.*
+Any matching line is dropped from `context.md`. Domain-like tokens (`.in`, `.com`, `www.`, `http`) and email addresses are stripped automatically.
 
-### 2. Agy Prompt Customization
-To change the instructions given to the AI when a session starts, modify the `SEED_PROMPT` variable inside `aikular`:
-
-```bash
-SEED_PROMPT="You are analyzing the PDF: $PDF_NAME.
-Document map: $OUTLINE_PATH — read this FIRST.
-Full content: $CONTEXT_PATH (pages separated by <!-- page: N --> markers).
-The PDF is open in Okular for visual reference.
-Always cite [Page N] when answering."
+### 2. Render tuning
+Constants at the top of `aikular_parser.py`:
+```python
+DEFAULT_DPI = 150        # base render DPI (raise for dense small text)
+MAX_EDGE_PX = 1800       # cap long edge; lower to cut image-token cost
+SPARSE_CHAR_LIMIT = 25   # below this a page is treated as image-only
+IMAGE_AREA_FRAC = 0.12   # raster must cover this fraction to count as a figure
+VECTOR_DRAW_LIMIT = 25   # vector ops above this imply a drawn chart
 ```
+Override DPI per run: `python3 aikular_parser.py in.pdf out --images auto --dpi 220`.
 
-### 3. Change System Username / Hardcoded Paths
-If you deploy these scripts on another system, make sure the absolute path inside `aikular.desktop` points to your correct user directory:
+### 3. Seed prompt
+Edit `SEED_PROMPT` inside `aikular`. It instructs the AI to read the referenced PNG paths and never claim a page is empty before checking its image.
+
+### 4. Hardcoded path in the desktop file
+`aikular.desktop` still hardcodes an absolute path. Set it to your home:
 ```ini
 Exec=/home/<your_username>/.local/bin/aikular %f
 ```
-*(Open `aikular.desktop` and replace `/home/quantavil/` with your user's home path).*
 
-### 4. Switch AI Backend (agy vs. opencode)
-Aikular supports switching between `agy` and `opencode` backends. By default, it uses `agy`.
-
-To see the current backend:
+### 5. Switch AI backend (agy vs opencode)
 ```bash
-aikular --backend
+aikular --backend   # show current
+aikular --switch    # toggle
 ```
+Saved in `~/.config/aikular/backend`.
 
-To toggle/switch the backend:
-```bash
-aikular --switch
-```
-This configuration is saved in `~/.config/aikular/backend`.
+---
+
+## Notes on behaviour
+
+- **No OCR.** Image-capable backends read page renders directly. The trade-off: text on image-only pages is not in `context.md`, so those pages are found by page number, not keyword search. Fine for born-digital study material; if you need full-text search over scanned books, add a text-indexing pass separately.
+- **Concurrent runs** on the same PDF are serialised with a `flock` lock beside the cache directory.
+- **Session persistence** is best-effort. `ghostty -e` can return before the backend writes its session row, so the first launch may not capture an id; subsequent launches reuse it reliably.

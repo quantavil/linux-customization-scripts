@@ -1,43 +1,78 @@
 #!/usr/bin/env python3
+"""Aikular PDF parser.
+
+Extracts structured Markdown (outline.md + context.md) from a PDF and renders
+PNG images of pages that carry visual information (figures, charts, scans,
+vector diagrams) so an image-capable AI backend can read them directly by path.
+
+Text-only pages stay lean text. Only pages that need eyes get a PNG, unless
+--images all is passed.
+"""
 import sys
 import os
 import re
-import fitz  # PyMuPDF
+import argparse
+import unicodedata
+from dataclasses import dataclass, field
 from collections import Counter
 
+import fitz  # PyMuPDF
+
+SOFT_HYPHEN = "\u00ad"
+
+DOMAIN_RE = re.compile(r"\b[\w-]+\.(?:in|com|org|net|io|co)\b", re.IGNORECASE)
+PAGE_OF_RE = re.compile(r"^page\s+\d+\s+of\s+\d+$", re.IGNORECASE)
+
+WATERMARK_KEYWORDS = (
+    "subscribe", "subscription", "telegram", "guidely",
+    "mock test", "all in one", "pdf course", "topic-wise",
+)
+
+# Render tuning
+DEFAULT_DPI = 150
+MAX_EDGE_PX = 1800          # cap long edge so image-token cost stays sane
+SPARSE_CHAR_LIMIT = 25      # below this a page is treated as image-only
+IMAGE_AREA_FRAC = 0.12      # a raster covering >12% of the page is a real figure
+VECTOR_DRAW_LIMIT = 25      # many vector paths implies a drawn chart/diagram
+MIN_HEADING_LEN = 4
+
+
+def norm(s):
+    """NFKC-normalise and strip soft hyphens / ligature artefacts."""
+    if not s:
+        return ""
+    return unicodedata.normalize("NFKC", s).replace(SOFT_HYPHEN, "")
+
+
+@dataclass
+class DocCtx:
+    """Per-document parsing state. Passed explicitly so the parser is reentrant."""
+    body_size: float = 10.0
+    boilerplate: set = field(default_factory=set)
+
+
 def get_body_size(doc):
-    """
-    Computes the most common font size in the document to establish a baseline body text size.
-    """
+    """Most common rounded font size across the document = baseline body size."""
     font_sizes = []
     for page in doc:
         try:
             blocks = page.get_text("dict").get("blocks", [])
         except Exception as e:
-            print(f"Warning: Failed to retrieve text dict for body size computation: {e}", file=sys.stderr)
+            print(f"Warning: body-size text dict failed on a page: {e}", file=sys.stderr)
             continue
-            
         for block in blocks:
-            if "lines" in block:
-                for line in block.get("lines", []):
-                    for span in line.get("spans", []):
-                        size = span.get("size")
-                        if size is not None:
-                            font_sizes.append(round(size, 1))
-                            
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    size = span.get("size")
+                    if size is not None:
+                        font_sizes.append(round(size, 1))
     if font_sizes:
-        size_counts = Counter(font_sizes)
-        return size_counts.most_common(1)[0][0]
+        return Counter(font_sizes).most_common(1)[0][0]
     return 10.0
 
-# Module-level set for boilerplate lines detected per-document
-_boilerplate_lines = set()
 
 def detect_boilerplate(doc):
-    """
-    Scans all pages and collects text lines that appear on >40% of pages.
-    These are boilerplate headers/footers (e.g. 'Topic-Wise Bundle Course').
-    """
+    """Text lines appearing on >40% of pages are headers/footers, not content."""
     line_page_count = Counter()
     page_count = len(doc)
     for page in doc:
@@ -45,62 +80,61 @@ def detect_boilerplate(doc):
             blocks = page.get_text("dict").get("blocks", [])
         except Exception:
             continue
-        seen_on_page = set()
+        seen = set()
         for block in blocks:
             for line in block.get("lines", []):
-                text = "".join(s.get("text", "") for s in line.get("spans", [])).strip()
-                if text and text not in seen_on_page:
-                    seen_on_page.add(text)
-        for t in seen_on_page:
+                text = norm("".join(s.get("text", "") for s in line.get("spans", []))).strip()
+                if text:
+                    seen.add(text)
+        for t in seen:
             line_page_count[t] += 1
     threshold = max(3, int(page_count * 0.4))
     return {t for t, c in line_page_count.items() if c >= threshold}
 
-def is_watermark_text(text):
-    """
-    Checks if the text looks like a watermark, boilerplate, or noise.
-    """
-    t_lower = text.lower().strip()
-    if not t_lower:
+
+def line_text(line):
+    return norm("".join(s.get("text", "") for s in line.get("spans", []))).strip()
+
+
+def is_watermark_text(text, ctx):
+    """True if the line is a watermark, promo link, boilerplate, or noise."""
+    t = norm(text).strip()
+    tl = t.lower()
+    if not tl:
         return True
-    if "@" in t_lower:
+    if "@" in tl:
         return True
-    if "www." in t_lower or "http" in t_lower or ".in" in t_lower or ".com" in t_lower or ".org" in t_lower or ".net" in t_lower:
+    if "http" in tl or "www." in tl or DOMAIN_RE.search(tl):
         return True
-    watermark_keywords = [
-        "subscribe", "subscription", "telegram", "guidely",
-        "mock test", "all in one", "pdf course", "topic-wise"
-    ]
-    if any(keyword in t_lower for keyword in watermark_keywords):
+    if any(k in tl for k in WATERMARK_KEYWORDS):
         return True
-    # Page X Of Y pattern
-    if re.match(r"^page\s+\d+\s+of\s+\d+$", t_lower):
+    if PAGE_OF_RE.match(tl):
         return True
-    # Check against document-level boilerplate
-    if text.strip() in _boilerplate_lines:
+    if t in ctx.boilerplate:
         return True
     return False
 
-def find_heading_in_block(block, body_size):
-    """
-    Scans a block for a heading by font size. Returns text if found, else None.
-    """
+
+def is_bold_span(span):
+    return "bold" in span.get("font", "").lower() or bool(span.get("flags", 0) & 16)
+
+
+def find_heading_in_block(block, ctx):
+    """Return heading text found by font size, else None."""
     for line in block.get("lines", []):
-        line_spans = line.get("spans", [])
-        if not line_spans:
+        spans = line.get("spans", [])
+        if not spans:
             continue
-        max_size = max(span.get("size", 0.0) for span in line_spans)
-        if round(max_size, 1) > body_size + 2.5:
-            heading_text = "".join(span.get("text", "") for span in line_spans).strip()
-            if len(heading_text) > 3 and not is_watermark_text(heading_text):
-                return heading_text
+        max_size = max(s.get("size", 0.0) for s in spans)
+        if round(max_size, 1) > ctx.body_size + 2.5:
+            text = line_text(line)
+            if len(text) > 3 and not is_watermark_text(text, ctx):
+                return text
     return None
 
-def find_first_bold_line(blocks, body_size):
-    """
-    Fallback: returns the first bold line on a page that isn't watermark/boilerplate.
-    Used when no size-based heading is found (uniform-font PDFs).
-    """
+
+def find_first_bold_line(blocks, ctx):
+    """Fallback for uniform-font PDFs: first non-watermark, mostly-bold line."""
     for block in blocks:
         if block.get("type") != 0:
             continue
@@ -108,287 +142,350 @@ def find_first_bold_line(blocks, body_size):
             spans = line.get("spans", [])
             if not spans:
                 continue
-            text = "".join(s.get("text", "") for s in spans).strip()
-            if len(text) < 4 or is_watermark_text(text):
+            text = line_text(line)
+            if len(text) < MIN_HEADING_LEN or is_watermark_text(text, ctx):
                 continue
             total = sum(len(s.get("text", "")) for s in spans)
-            bold = sum(
-                len(s.get("text", "")) for s in spans
-                if "bold" in s.get("font", "").lower() or (s.get("flags", 0) & 16)
-            )
+            bold = sum(len(s.get("text", "")) for s in spans if is_bold_span(s))
             if total > 0 and bold / total > 0.7:
                 return text
     return None
 
-def extract_metadata_and_toc(doc, body_size):
+
+def detect_heading_level(spans, ctx):
+    """Return (is_heading, level in {1,2})."""
+    if not spans:
+        return False, 0
+    text = norm("".join(s.get("text", "") for s in spans)).strip()
+    if is_watermark_text(text, ctx):
+        return False, 0
+
+    max_size = max(s.get("size", 0.0) for s in spans)
+    bold_chars = sum(len(s.get("text", "")) for s in spans if is_bold_span(s))
+    total_chars = sum(len(s.get("text", "")) for s in spans)
+    is_bold_line = total_chars > 0 and (bold_chars / total_chars) > 0.7
+
+    if max_size >= ctx.body_size + 4.5:
+        return True, 1
+    if max_size >= ctx.body_size + 1.5:
+        return True, 2
+    if max_size >= ctx.body_size and is_bold_line and total_chars < 80:
+        return True, 2
+    return False, 0
+
+
+def join_lines(parts):
+    """Join wrapped lines into a paragraph, de-hyphenating soft line breaks.
+
+    'informa-' + 'tion' -> 'information' (soft break, lowercase both sides).
+    'well-' + 'Known'  -> 'well-Known'   (kept: proper noun boundary).
     """
-    Extracts basic document metadata and generates a table of contents outline.
-    """
-    title = doc.metadata.get("title") or "Untitled Document"
-    # Clean underscored metadata titles
-    title = title.replace("_", " ").strip()
-    author = doc.metadata.get("author") or "Unknown Author"
+    out = ""
+    for part in parts:
+        p = part.strip()
+        if not p:
+            continue
+        if not out:
+            out = p
+            continue
+        if out.endswith("-"):
+            prev = out[:-1]
+            if prev and prev[-1].isalpha() and prev[-1].islower() and p[:1].islower():
+                out = prev + p          # de-hyphenate
+            else:
+                out = out + p           # keep hyphen (compound / proper noun / digit)
+        else:
+            out += " " + p
+    return out
+
+
+def get_table_objs(page):
+    try:
+        tf = page.find_tables()
+    except Exception as e:
+        print(f"Warning: find_tables failed: {e}", file=sys.stderr)
+        return []
+    if hasattr(tf, "tables"):
+        return list(tf.tables)
+    try:
+        return list(tf)
+    except Exception:
+        return []
+
+
+def format_table_markdown(table):
+    """PyMuPDF Table -> GitHub-flavoured Markdown, escaping literal pipes."""
+    try:
+        data = table.extract()
+    except Exception as e:
+        print(f"Warning: table extract failed: {e}", file=sys.stderr)
+        return ""
+    if not data:
+        return ""
+
+    def cell(x):
+        return norm(str(x or "")).replace("\n", " ").replace("|", "\\|").strip()
+
+    headers = [cell(x) for x in data[0]]
+    if not headers:
+        return ""
+    md = "| " + " | ".join(headers) + " |\n"
+    md += "| " + " | ".join(["---"] * len(headers)) + " |\n"
+    for row in data[1:]:
+        md += "| " + " | ".join(cell(x) for x in row) + " |\n"
+    return md
+
+
+def extract_page_content(page, ctx, table_rects):
+    """Structured Markdown text for a page. Lines inside table_rects are skipped
+    (they are emitted separately as Markdown tables) to avoid duplication."""
+    try:
+        blocks = page.get_text("dict").get("blocks", [])
+    except Exception as e:
+        print(f"Warning: page text dict failed: {e}", file=sys.stderr)
+        return ""
+
+    text_blocks = [b for b in blocks if b.get("type") == 0]
+    # Reading order: top-to-bottom, then left-to-right. Helps single-column PDFs.
+    text_blocks.sort(key=lambda b: (round(b.get("bbox", [0, 0])[1]), round(b.get("bbox", [0, 0])[0])))
+
+    out = []
+    for block in text_blocks:
+        para = []
+        for line in block.get("lines", []):
+            spans = line.get("spans", [])
+            if not spans:
+                continue
+            try:
+                lb = fitz.Rect(line["bbox"])
+                if any(lb.intersects(r) for r in table_rects):
+                    continue
+            except Exception:
+                pass
+
+            txt = line_text(line)
+            if not txt or is_watermark_text(txt, ctx):
+                continue
+
+            is_heading, level = detect_heading_level(spans, ctx)
+            if is_heading:
+                if para:
+                    joined = join_lines(para).strip()
+                    if joined:
+                        out.append(joined)
+                    para = []
+                out.append(f"{'#' * level} {txt}")
+            else:
+                para.append(txt)
+
+        if para:
+            joined = join_lines(para).strip()
+            if joined:
+                out.append(joined)
+
+    return "\n\n".join(i.strip() for i in out if i.strip())
+
+
+def page_visual_stats(page):
+    """Return (char_count, has_big_raster, n_vector_drawings)."""
+    char_count = len(page.get_text("text").strip())
+    page_area = abs(page.rect.width * page.rect.height) or 1.0
+
+    has_big_raster = False
+    try:
+        for img in page.get_images(full=True):
+            xref = img[0]
+            try:
+                rects = page.get_image_rects(xref)
+            except Exception:
+                rects = []
+            if any(abs(r.width * r.height) / page_area > IMAGE_AREA_FRAC for r in rects):
+                has_big_raster = True
+                break
+    except Exception:
+        pass
+
+    try:
+        n_draw = len(page.get_drawings())
+    except Exception:
+        n_draw = 0
+
+    return char_count, has_big_raster, n_draw
+
+
+def should_render(stats):
+    char_count, has_big_raster, n_draw = stats
+    return char_count < SPARSE_CHAR_LIMIT or has_big_raster or n_draw >= VECTOR_DRAW_LIMIT
+
+
+def render_page_png(page, out_path, dpi=DEFAULT_DPI, max_edge=MAX_EDGE_PX):
+    """Render a page to PNG, capping the long edge to control token cost."""
+    rect = page.rect
+    long_pts = max(rect.width, rect.height) or 1.0
+    target_dpi = min(dpi, max_edge * 72.0 / long_pts)
+    zoom = target_dpi / 72.0
+    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+    pix.save(out_path)
+    return pix.width, pix.height
+
+
+def extract_metadata_and_toc(doc, ctx):
+    title = norm(doc.metadata.get("title") or "").replace("_", " ").strip() or "Untitled Document"
+    author = norm(doc.metadata.get("author") or "").strip() or "Unknown Author"
     page_count = len(doc)
-    
-    # Try native TOC first
+
     try:
         native_toc = doc.get_toc()
     except Exception as e:
-        print(f"Warning: Failed to retrieve native TOC: {e}", file=sys.stderr)
+        print(f"Warning: native TOC failed: {e}", file=sys.stderr)
         native_toc = None
-        
+
     toc_lines = []
     if native_toc:
         for lvl, title_text, pno in native_toc:
-            indent = "  " * (lvl - 1)
-            toc_lines.append(f"{indent}- [Page {pno}] {title_text}")
+            toc_lines.append(f"{'  ' * (lvl - 1)}- [Page {pno}] {norm(title_text).strip()}")
     else:
-        # Fallback: try font-size heading first, then bold line
         for page_num in range(1, page_count + 1):
             page = doc[page_num - 1]
             try:
                 blocks = page.get_text("dict").get("blocks", [])
             except Exception as e:
-                print(f"Warning: Failed to retrieve text dict for TOC heuristic: {e}", file=sys.stderr)
+                print(f"Warning: TOC heuristic text dict failed on page {page_num}: {e}", file=sys.stderr)
                 continue
-            heading_text = None
+            heading = None
             for block in blocks:
-                heading_text = find_heading_in_block(block, body_size)
-                if heading_text:
+                heading = find_heading_in_block(block, ctx)
+                if heading:
                     break
-            if not heading_text:
-                heading_text = find_first_bold_line(blocks, body_size)
-            if heading_text:
-                toc_lines.append(f"- [Page {page_num}] {heading_text}")
-                        
+            if not heading:
+                heading = find_first_bold_line(blocks, ctx)
+            if heading:
+                toc_lines.append(f"- [Page {page_num}] {heading}")
+
     return title, author, page_count, toc_lines
 
-def join_lines(lines_list):
-    """
-    Joins individual text lines back into paragraph blocks.
-    Preserves line-ending hyphens for compound words (e.g. self-contained).
-    """
-    block_text = ""
-    for part in lines_list:
-        part_stripped = part.strip()
-        if not part_stripped:
-            continue
-        if block_text:
-            if block_text.endswith("-"):
-                # Preserve the hyphen for compound words, joining directly
-                block_text = block_text + part_stripped
-            else:
-                block_text += " " + part_stripped
-        else:
-            block_text = part_stripped
-    return block_text
 
-def format_table_markdown(table):
-    """
-    Formats a PyMuPDF Table object into a Github-Flavored Markdown table.
-    Escapes literal pipe characters to prevent breaking markdown syntax.
-    """
-    try:
-        data = table.extract()
-    except Exception as e:
-        print(f"Warning: Failed to extract table data: {e}", file=sys.stderr)
-        return ""
-        
-    if not data or len(data) == 0:
-        return ""
-        
-    headers = [str(x or "").replace("\n", " ").replace("|", "\\|").strip() for x in data[0]]
-    rows = []
-    for r in data[1:]:
-        rows.append([str(x or "").replace("\n", " ").replace("|", "\\|").strip() for x in r])
-        
-    # Markdown construction
-    md = "| " + " | ".join(headers) + " |\n"
-    md += "| " + " | ".join(["---"] * len(headers)) + " |\n"
-    for row in rows:
-        md += "| " + " | ".join(row) + " |\n"
-    return md
-
-def detect_heading_level(line_spans, body_size):
-    """
-    Detects if the line represents a heading and returns a tuple (is_heading, h_level).
-    is_heading is a boolean, and h_level is the level of heading (1 or 2).
-    """
-    if not line_spans:
-        return False, 0
-        
-    line_text = "".join(span.get("text", "") for span in line_spans).strip()
-    if is_watermark_text(line_text):
-        return False, 0
-        
-    max_size = max(span.get("size", 0.0) for span in line_spans)
-    
-    # Calculate character bold ratio
-    bold_chars = 0
-    total_chars = 0
-    for span in line_spans:
-        text = span.get("text", "")
-        font = span.get("font", "").lower()
-        font_flags = span.get("flags", 0)
-        
-        # In PyMuPDF flags, bitmask 16 stands for Bold, bitmask 2 for Italic
-        is_bold = "bold" in font or bool(font_flags & 16)
-        
-        bold_chars += len(text) if is_bold else 0
-        total_chars += len(text)
-        
-    is_bold_line = total_chars > 0 and (bold_chars / total_chars) > 0.7
-    
-    if max_size >= body_size + 4.5:
-        return True, 1
-    elif max_size >= body_size + 1.5:
-        return True, 2
-    elif max_size >= body_size and is_bold_line and total_chars < 80:
-        return True, 2
-        
-    return False, 0
-
-def extract_page_content(page, body_size):
-    """
-    Extracts text blocks from a page, identifies headings, and structures them into markdown.
-    """
-    try:
-        blocks = page.get_text("dict").get("blocks", [])
-    except Exception as e:
-        print(f"Warning: Failed to retrieve page text blocks: {e}", file=sys.stderr)
-        return ""
-        
-    page_content = []
-    for block in blocks:
-        if block.get("type") == 0:  # text block
-            block_lines = block.get("lines", [])
-            if not block_lines:
-                continue
-            
-            current_para = []
-            for line in block_lines:
-                line_spans = line.get("spans", [])
-                if not line_spans:
-                    continue
-                    
-                line_text = "".join(span.get("text", "") for span in line_spans).strip()
-                if not line_text or is_watermark_text(line_text):
-                    continue
-                    
-                is_heading, h_level = detect_heading_level(line_spans, body_size)
-                
-                if is_heading:
-                    # Flush current paragraph first
-                    if current_para:
-                        text_to_add = join_lines(current_para)
-                        if text_to_add:
-                            page_content.append(text_to_add.strip())
-                        current_para = []
-                    
-                    # Add heading
-                    prefix = "#" * h_level
-                    page_content.append(f"{prefix} {line_text}")
-                else:
-                    current_para.append(line_text)
-                    
-            # Flush any remaining paragraph lines in this block
-            if current_para:
-                text_to_add = join_lines(current_para)
-                if text_to_add:
-                    page_content.append(text_to_add.strip())
-                    
-    # Join page content blocks simply with double newlines
-    cleaned_items = [item.strip() for item in page_content if item.strip()]
-    return "\n\n".join(cleaned_items)
-
-def parse_pdf(pdf_path, output_dir):
-    """
-    Parses the target PDF and generates structured outline.md and context.md files.
-    """
-    # 1. Input validations
+def parse_pdf(pdf_path, output_dir, images_mode="auto", dpi=DEFAULT_DPI):
     if not os.path.isfile(pdf_path):
         raise FileNotFoundError(f"PDF path '{pdf_path}' does not exist or is not a file.")
-        
-    # 2. Output directory setup
     try:
         os.makedirs(output_dir, exist_ok=True)
     except OSError as e:
         raise OSError(f"Failed to create output directory '{output_dir}': {e}")
-        
-    # 3. Open document and parse using context manager
+
     try:
         doc = fitz.open(pdf_path)
     except Exception as e:
-        raise RuntimeError(f"Failed to open PDF file '{pdf_path}': {e}")
-        
+        raise RuntimeError(f"Failed to open PDF '{pdf_path}': {e}")
+
     with doc:
+        if doc.needs_pass:
+            if not doc.authenticate(""):
+                raise RuntimeError(f"PDF '{pdf_path}' is encrypted and needs a password.")
+
         page_count = len(doc)
-        body_size = get_body_size(doc)
-        
-        # Detect boilerplate lines across the document
-        global _boilerplate_lines
-        _boilerplate_lines = detect_boilerplate(doc)
-        
-        # 4. Generate outline.md
-        title, author, _, toc_lines = extract_metadata_and_toc(doc, body_size)
+        ctx = DocCtx(body_size=get_body_size(doc), boilerplate=detect_boilerplate(doc))
+
+        images_dir = os.path.join(output_dir, "images")
+        # outline.md
+        title, author, _, toc_lines = extract_metadata_and_toc(doc, ctx)
         outline_path = os.path.join(output_dir, "outline.md")
         try:
             with open(outline_path, "w", encoding="utf-8") as f:
                 f.write(f"# {title}\n\n")
                 f.write(f"**Pages**: {page_count} | **Author**: {author}\n\n")
                 f.write("## Table of Contents\n\n")
-                if toc_lines:
-                    f.write("\n".join(toc_lines) + "\n")
-                else:
-                    f.write("*No table of contents could be generated.*\n")
+                f.write(("\n".join(toc_lines) + "\n") if toc_lines
+                        else "*No table of contents could be generated.*\n")
                 f.write("\n## Notes\n\n")
-                f.write("- Full content is in `context.md` with page tags like `<!-- page: N -->`.\n")
-                f.write("- Tables are formatted as markdown tables.\n")
+                f.write("- Full text is in `context.md`, pages tagged `<!-- page: N -->`.\n")
+                f.write("- Tables are Markdown tables.\n")
+                f.write("- Visual pages (figures, charts, scans) reference an absolute PNG path.\n")
+                f.write("  Read that PNG with your image/file read tool to see the page.\n")
         except OSError as e:
-            raise OSError(f"Failed to write to outline file '{outline_path}': {e}")
-            
-        # 5. Generate context.md
+            raise OSError(f"Failed to write outline '{outline_path}': {e}")
+
+        # context.md
         context_path = os.path.join(output_dir, "context.md")
+        rendered = 0
         try:
             with open(context_path, "w", encoding="utf-8") as f:
                 for page_num in range(1, page_count + 1):
                     page = doc[page_num - 1]
-                    f.write(f"<!-- page: {page_num} -->\n")
+
+                    tables = get_table_objs(page)
+                    table_rects = []
+                    for t in tables:
+                        try:
+                            table_rects.append(fitz.Rect(t.bbox))
+                        except Exception:
+                            pass
+
+                    text = extract_page_content(page, ctx, table_rects)
+
+                    stats = page_visual_stats(page)
+                    if images_mode == "all":
+                        do_render = True
+                    elif images_mode == "none":
+                        do_render = False
+                    else:
+                        do_render = should_render(stats)
+
+                    png_abs = None
+                    if do_render:
+                        os.makedirs(images_dir, exist_ok=True)
+                        png_abs = os.path.abspath(os.path.join(images_dir, f"page_{page_num:03d}.png"))
+                        try:
+                            render_page_png(page, png_abs, dpi=dpi)
+                            rendered += 1
+                        except Exception as e:
+                            print(f"Warning: render failed page {page_num}: {e}", file=sys.stderr)
+                            png_abs = None
+
+                    char_count, has_raster, n_draw = stats
+                    tag = "visual" if char_count < SPARSE_CHAR_LIMIT else ("has_figure" if png_abs else "text")
+                    f.write(f"<!-- page: {page_num} | {tag} | chars={char_count} raster={int(has_raster)} draw={n_draw} -->\n")
                     f.write(f"# Page {page_num}\n\n")
-                    
-                    # Extract tables
-                    table_markdowns = []
-                    try:
-                        tables = page.find_tables()
-                        for table in tables:
-                            md = format_table_markdown(table)
-                            if md:
-                                table_markdowns.append(md)
-                    except Exception as e:
-                        print(f"Warning: Failed to extract tables from page {page_num}: {e}", file=sys.stderr)
-                        
-                    # Extract plain text
-                    text = extract_page_content(page, body_size)
+
                     if text:
-                        f.write(text)
-                        f.write("\n\n")
-                        
-                    if table_markdowns:
+                        f.write(text + "\n\n")
+
+                    tbl_md = [format_table_markdown(t) for t in tables]
+                    tbl_md = [m for m in tbl_md if m]
+                    if tbl_md:
                         f.write("### Extracted Tables\n\n")
-                        for tb_md in table_markdowns:
-                            f.write(tb_md + "\n\n")
-                            
+                        for m in tbl_md:
+                            f.write(m + "\n\n")
+
+                    if png_abs:
+                        if char_count < SPARSE_CHAR_LIMIT:
+                            note = "This page has little or no extractable text. Read its image directly:"
+                        else:
+                            note = "This page contains a figure/chart. Read its image if the question concerns the visual:"
+                        f.write(f"*[{note}]*\n\n")
+                        f.write(f"`{png_abs}`\n\n")
+
                     f.write("---\n")
         except OSError as e:
-            raise OSError(f"Failed to write to context file '{context_path}': {e}")
+            raise OSError(f"Failed to write context '{context_path}': {e}")
 
-if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Usage: aikular_parser.py <pdf_path> <output_dir>")
-        sys.exit(1)
-        
+        print(f"Parsed {page_count} pages, rendered {rendered} page image(s).", file=sys.stderr)
+
+
+def main():
+    p = argparse.ArgumentParser(description="Parse a PDF into outline.md + context.md with page renders.")
+    p.add_argument("pdf_path")
+    p.add_argument("output_dir")
+    p.add_argument("--images", choices=["auto", "all", "none"], default="auto",
+                   help="auto = render only visual pages (default); all = every page; none = text only.")
+    p.add_argument("--dpi", type=int, default=DEFAULT_DPI)
+    args = p.parse_args()
     try:
-        parse_pdf(sys.argv[1], sys.argv[2])
+        parse_pdf(args.pdf_path, args.output_dir, images_mode=args.images, dpi=args.dpi)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

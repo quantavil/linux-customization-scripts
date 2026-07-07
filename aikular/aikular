@@ -1,19 +1,16 @@
 #!/bin/bash
-set -eo pipefail
+set -euo pipefail
 
 CONFIG_DIR="$HOME/.config/aikular"
 CONFIG_FILE="$CONFIG_DIR/backend"
 
-# Helper function to print to stderr and exit
 error_exit() {
     echo "Error: $1" >&2
     exit 1
 }
 
-# Helper to send notification if notify-send is available, fallback to stderr
 notify() {
-    local title="$1"
-    local message="$2"
+    local title="$1" message="$2"
     if command -v notify-send >/dev/null 2>&1; then
         notify-send -a "Aikular" "$title" "$message" || true
     else
@@ -21,57 +18,54 @@ notify() {
     fi
 }
 
-# Read current backend (default: agy)
 get_backend() {
     if [[ -f "$CONFIG_FILE" ]]; then
         local val
         val=$(tr -d '[:space:]' < "$CONFIG_FILE" || echo "agy")
         if [[ "$val" == "opencode" || "$val" == "agy" ]]; then
-            echo "$val"
-            return
+            echo "$val"; return
         fi
     fi
     echo "agy"
 }
 
-# Check for essential utility tools
-for tool in python3 realpath md5sum cut dirname basename setsid sqlite3; do
-    if ! command -v "$tool" >/dev/null 2>&1; then
-        error_exit "Required system tool '$tool' is not installed."
-    fi
+for tool in python3 realpath md5sum cut dirname basename setsid sqlite3 flock find; do
+    command -v "$tool" >/dev/null 2>&1 || error_exit "Required system tool '$tool' is not installed."
 done
 
-# Parse arguments
 REFRESH=false
-case "${1:-}" in
-    --refresh)
-        REFRESH=true
-        shift
-        ;;
-    --clean)
-        shift
-        CLEAN_SCRIPT="${BASH_SOURCE[0]%/*}/aikular-clean"
-        [[ ! -f "$CLEAN_SCRIPT" ]] && CLEAN_SCRIPT="$HOME/.local/bin/aikular-clean"
-        [[ -f "$CLEAN_SCRIPT" ]] && exec "$CLEAN_SCRIPT" "$@"
-        error_exit "Cleanup script not found."
-        ;;
-    --switch)
-        CURRENT=$(get_backend)
-        if [[ "$CURRENT" == "agy" ]]; then
-            NEW="opencode"
-        else
-            NEW="agy"
-        fi
-        mkdir -p "$CONFIG_DIR"
-        echo "$NEW" > "$CONFIG_FILE"
-        echo "Aikular backend switched: $CURRENT → $NEW"
-        exit 0
-        ;;
-    --backend)
-        echo "Current backend: $(get_backend)"
-        exit 0
-        ;;
-esac
+IMAGES_MODE="auto"   # auto | all | none
+
+# Parse leading options; early-exit subcommands handled inline.
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --refresh)   REFRESH=true; shift ;;
+        --images)    IMAGES_MODE="all"; shift ;;
+        --no-images) IMAGES_MODE="none"; shift ;;
+        --clean)
+            shift
+            CLEAN_SCRIPT="${BASH_SOURCE[0]%/*}/aikular-clean"
+            [[ ! -f "$CLEAN_SCRIPT" ]] && CLEAN_SCRIPT="$HOME/.local/bin/aikular-clean"
+            [[ -f "$CLEAN_SCRIPT" ]] && exec "$CLEAN_SCRIPT" "$@"
+            error_exit "Cleanup script not found."
+            ;;
+        --switch)
+            CURRENT=$(get_backend)
+            [[ "$CURRENT" == "agy" ]] && NEW="opencode" || NEW="agy"
+            mkdir -p "$CONFIG_DIR"
+            echo "$NEW" > "$CONFIG_FILE"
+            echo "Aikular backend switched: $CURRENT -> $NEW"
+            exit 0
+            ;;
+        --backend)
+            echo "Current backend: $(get_backend)"
+            exit 0
+            ;;
+        --) shift; break ;;
+        -*) error_exit "Unknown option: $1" ;;
+        *)  break ;;
+    esac
+done
 
 PDF_PATH="${1:-}"
 if [[ -z "$PDF_PATH" ]]; then
@@ -79,26 +73,28 @@ if [[ -z "$PDF_PATH" ]]; then
 Usage: aikular [options] <pdf_path>
 
 Options:
-  --refresh    Force re-parse (clear cache first)
-  --clean      Clean cache for a PDF or directory
-  --switch     Toggle backend between agy and opencode
-  --backend    Show current backend
+  --refresh     Force re-parse (clear cache first)
+  --images      Render EVERY page to PNG (default: only visual pages)
+  --no-images   Skip all page rendering (text only)
+  --clean       Clean cache for a PDF or directory
+  --switch      Toggle backend between agy and opencode
+  --backend     Show current backend
+
+Note: page renders let the AI read figures/charts/scans directly.
+Changing --images/--no-images on a cached PDF needs --refresh to take effect.
 EOF
     exit 1
 fi
 
-# Resolve absolute path of PDF
 ABS_PDF_PATH=$(realpath "$PDF_PATH")
 PDF_DIR=$(dirname "$ABS_PDF_PATH")
 PDF_NAME=$(basename "$ABS_PDF_PATH")
 PDF_STEM="${PDF_NAME%.*}"
 
-# Check if target is a valid PDF
-if [[ ! -f "$ABS_PDF_PATH" || ( "${PDF_NAME,,}" != *.pdf ) ]]; then
+if [[ ! -f "$ABS_PDF_PATH" || "${PDF_NAME,,}" != *.pdf ]]; then
     error_exit "File '$PDF_PATH' does not exist or is not a PDF."
 fi
 
-# Determine output directory
 if [[ -w "$PDF_DIR" ]]; then
     OUTPUT_DIR="$PDF_DIR/.aikular/$PDF_STEM"
 else
@@ -109,55 +105,55 @@ fi
 OUTLINE_PATH="$OUTPUT_DIR/outline.md"
 CONTEXT_PATH="$OUTPUT_DIR/context.md"
 
-# Determine parser script path dynamically or fallback to hardcoded user bin
 PARSER_SCRIPT="${BASH_SOURCE[0]%/*}/aikular_parser.py"
-if [[ ! -f "$PARSER_SCRIPT" ]]; then
-    PARSER_SCRIPT="$HOME/.local/bin/aikular_parser.py"
-fi
+[[ ! -f "$PARSER_SCRIPT" ]] && PARSER_SCRIPT="$HOME/.local/bin/aikular_parser.py"
+[[ ! -f "$PARSER_SCRIPT" ]] && error_exit "Parser script not found at '$PARSER_SCRIPT'"
 
-if [[ ! -f "$PARSER_SCRIPT" ]]; then
-    error_exit "Parser script not found at '$PARSER_SCRIPT'"
-fi
+# Serialise parsing of the same PDF; lock lives beside the cache dir.
+mkdir -p "$(dirname "$OUTPUT_DIR")"
+LOCK_FILE="${OUTPUT_DIR}.lock"
+exec 9>"$LOCK_FILE"
+flock -w 120 9 || error_exit "Timed out waiting for another aikular parse to finish."
 
-# Clean cache if refresh requested
-if [[ "$REFRESH" == true ]]; then
-    rm -rf "$OUTPUT_DIR"
-fi
+[[ "$REFRESH" == true ]] && rm -rf "$OUTPUT_DIR"
 
-# Check if cache exists
 if [[ ! -f "$CONTEXT_PATH" ]]; then
     notify "Parsing PDF..." "$PDF_NAME"
-    if ! python3 "$PARSER_SCRIPT" "$ABS_PDF_PATH" "$OUTPUT_DIR"; then
+    if ! python3 "$PARSER_SCRIPT" "$ABS_PDF_PATH" "$OUTPUT_DIR" --images "$IMAGES_MODE"; then
         rm -rf "$OUTPUT_DIR"
         error_exit "PDF parsing failed. Cleaned up corrupt cache."
     fi
 fi
 
-# Determine which AI backend to use
+flock -u 9   # release lock before launching interactive UI
+
 BACKEND=$(get_backend)
 
-# Validate UI/Terminal dependencies
 for tool in okular ghostty fish "$BACKEND"; do
-    if ! command -v "$tool" >/dev/null 2>&1; then
-        error_exit "Required application '$tool' is not installed or not in PATH."
-    fi
+    command -v "$tool" >/dev/null 2>&1 || error_exit "Required application '$tool' is not installed or not in PATH."
 done
 
-# Spawn Okular detached
 setsid okular "$ABS_PDF_PATH" >/dev/null 2>&1 &
 
-# Seed prompt
-SEED_PROMPT="You are analyzing the PDF: $PDF_NAME.
-Document map: $OUTLINE_PATH — read this FIRST.
-Full content: $CONTEXT_PATH (pages separated by <!-- page: N --> markers).
-The PDF is open in Okular for visual reference.
+SEED_PROMPT="You are analysing the PDF: $PDF_NAME.
+Document map: $OUTLINE_PATH. Read this FIRST.
+Full text: $CONTEXT_PATH (pages separated by <!-- page: N --> markers).
+Some pages contain figures, charts, tables or scans with little extractable text. Those pages include an absolute PNG path in context.md, tagged 'visual' or 'has_figure'. You can read images directly: when a question concerns such a page, open that PNG with your file/image read tool and read it. Do not claim a page is empty before checking its image.
+The PDF is also open in Okular for the human's reference.
 Always cite [Page N] when answering."
 
-# Launch Ghostty with the selected backend
 notify "Ready" "Okular + $BACKEND session started"
 export SEED_PROMPT
 
 SESSION_ID_FILE="$OUTPUT_DIR/${BACKEND}_session_id"
+
+# Best-effort session capture. NOTE: ghostty -e may return before the backend
+# writes its session row, so this can miss the very first session. Persistence
+# is reliable on the second launch onward. A backend flag that prints its own
+# session id would remove the race entirely.
+newest_file() {  # newest_file <dir> <glob>
+    find "$1" -maxdepth 1 -name "$2" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1 | cut -d' ' -f2-
+}
 
 if [[ "$BACKEND" == "opencode" ]]; then
     if [[ -s "$SESSION_ID_FILE" ]]; then
@@ -165,10 +161,9 @@ if [[ "$BACKEND" == "opencode" ]]; then
         ghostty --title="aikular: $PDF_STEM" --working-directory="$PDF_DIR" -e fish -c "opencode --session \"$SAVED_ID\""
     else
         ghostty --title="aikular: $PDF_STEM" --working-directory="$PDF_DIR" -e fish -c "opencode --prompt \"\$SEED_PROMPT\""
-        NEW_ID=$(sqlite3 "$HOME/.local/share/opencode/opencode.db" "SELECT id FROM session ORDER BY time_created DESC LIMIT 1;" 2>/dev/null || true)
-        if [[ -n "$NEW_ID" ]]; then
-            echo "$NEW_ID" > "$SESSION_ID_FILE"
-        fi
+        NEW_ID=$(sqlite3 "$HOME/.local/share/opencode/opencode.db" \
+                 "SELECT id FROM session ORDER BY time_created DESC LIMIT 1;" 2>/dev/null || true)
+        [[ -n "$NEW_ID" ]] && echo "$NEW_ID" > "$SESSION_ID_FILE"
     fi
 else
     if [[ -s "$SESSION_ID_FILE" ]]; then
@@ -176,7 +171,7 @@ else
         ghostty --title="aikular: $PDF_STEM" --working-directory="$PDF_DIR" -e fish -c "agy --dangerously-skip-permissions --conversation \"$SAVED_ID\""
     else
         ghostty --title="aikular: $PDF_STEM" --working-directory="$PDF_DIR" -e fish -c 'agy --dangerously-skip-permissions -i "$SEED_PROMPT"'
-        NEW_DB=$(ls -t "$HOME/.gemini/antigravity-cli/conversations"/*.db 2>/dev/null | head -n 1 || true)
+        NEW_DB=$(newest_file "$HOME/.gemini/antigravity-cli/conversations" "*.db")
         if [[ -n "$NEW_DB" ]]; then
             NEW_ID=$(basename "$NEW_DB" .db)
             echo "$NEW_ID" > "$SESSION_ID_FILE"
