@@ -31,9 +31,9 @@ WATERMARK_KEYWORDS = (
 # Render tuning
 DEFAULT_DPI = 150
 MAX_EDGE_PX = 1800          # cap long edge so image-token cost stays sane
-SPARSE_CHAR_LIMIT = 25      # below this a page is treated as image-only
-IMAGE_AREA_FRAC = 0.12      # a raster covering >12% of the page is a real figure
-VECTOR_DRAW_LIMIT = 25      # many vector paths implies a drawn chart/diagram
+SPARSE_CHAR_LIMIT = 50      # below this a page is treated as image-only
+IMAGE_AREA_FRAC = 0.08      # a raster covering >8% of the page is a real figure
+VECTOR_DRAW_LIMIT = 15      # vector paths implying a drawn chart/diagram
 MIN_HEADING_LEN = 4
 
 
