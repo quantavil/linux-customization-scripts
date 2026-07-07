@@ -8,6 +8,7 @@ Aikular is a CLI tool and wrapper that parses PDFs and starts interactive AI ana
 aikular/
 ├── README.md           # Documentation and setup
 ├── aikular             # Main entry point (Bash)
+├── aikular-render      # On-demand page-to-PNG tool the AI calls (Python)
 ├── aikular-clean       # Cache cleanup (Bash)
 ├── aikular.desktop     # Desktop entry for KDE integration
 └── aikular_parser.py   # PDF text extraction, table dedup, and page renderer (Python)
@@ -24,8 +25,10 @@ aikular/
 
 ## Image handling
 - No OCR. Multimodal backend reads page renders directly.
-- Page tags in context.md: `text` (no render), `has_figure` (text + PNG), `visual` (sparse text, PNG is primary).
-- Render triggers: chars `< 25`, or a raster covering `> 12%` of the page, or `>= 25` vector draw ops. `--images` renders all, `--no-images` renders none.
+- Page tags in context.md: `text` (no render), `has_figure` (text + PNG), `visual` (sparse text, PNG is primary). These are HINTS, not authoritative.
+- Pre-render triggers (auto mode): chars `< 25`, or a raster covering `> 12%` of the page, or `>= 25` vector draw ops. `--images` renders all, `--no-images` renders none.
+- On-demand: `aikular-render <pdf> <pages> [--dpi] [--bbox]` lets the AI rasterise ANY page itself, so a wrong parse-time guess is never a dead end. It mirrors the launcher's cache-dir logic and writes to `<cache>/images/`, printing PNG paths to stdout. bbox crops save as `page_NNN_crop.png`.
+- Launcher resolves `aikular-render`'s absolute path and bakes it, plus the PDF path, into the seed prompt so PATH issues and wrong-guess dead-ends are avoided.
 - Long edge capped at 1800 px to bound image-token cost.
 
 ## Critical Information

@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""aikular-render: render specific PDF page(s) to PNG on demand.
+
+The AI backend calls this when it decides a page needs to be seen as an image,
+regardless of what the parser's parse-time heuristic guessed. It writes into the
+SAME cache images folder the parser uses and prints the absolute PNG path(s) to
+stdout, one per line, for the AI to read with its image tool.
+
+Usage:
+  aikular-render <pdf_path> <pages> [--dpi N] [--bbox x0,y0,x1,y1]
+
+<pages> examples:
+  12            single page
+  12,14,20      several pages
+  12-15         a range (inclusive)
+  3,7-9         mix
+  all           every page
+
+Options:
+  --dpi N       render DPI (default 150; raise for dense small text)
+  --bbox ...    crop to a region in PDF points; saved as page_NNN_crop.png
+                (use to zoom into a chart/table when a full page is too small)
+"""
+import sys
+import os
+import re
+import hashlib
+import argparse
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.expanduser("~/.local/bin"))
+
+import fitz  # PyMuPDF
+
+try:
+    from aikular_parser import render_page_png, DEFAULT_DPI, MAX_EDGE_PX
+except Exception:
+    DEFAULT_DPI = 150
+    MAX_EDGE_PX = 1800
+
+    def render_page_png(page, out_path, dpi=DEFAULT_DPI, max_edge=MAX_EDGE_PX):
+        rect = page.rect
+        long_pts = max(rect.width, rect.height) or 1.0
+        target_dpi = min(dpi, max_edge * 72.0 / long_pts)
+        zoom = target_dpi / 72.0
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+        pix.save(out_path)
+        return pix.width, pix.height
+
+
+def resolve_cache_dir(abs_pdf):
+    """Mirror the launcher's cache-dir logic so renders land in the same place."""
+    pdf_dir = os.path.dirname(abs_pdf)
+    stem = os.path.splitext(os.path.basename(abs_pdf))[0]
+    if os.access(pdf_dir, os.W_OK):
+        return os.path.join(pdf_dir, ".aikular", stem)
+    h = hashlib.md5(pdf_dir.encode()).hexdigest()[:8]
+    user = os.environ.get("USER") or os.environ.get("USERNAME") or "user"
+    return os.path.join("/tmp", f"aikular-{user}", f"{stem}-{h}")
+
+
+def parse_pages(spec, page_count):
+    if spec.strip().lower() == "all":
+        return list(range(1, page_count + 1))
+    pages = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        m = re.match(r"^(\d+)-(\d+)$", part)
+        if m:
+            a, b = int(m.group(1)), int(m.group(2))
+            if a > b:
+                a, b = b, a
+            pages.extend(range(a, b + 1))
+        elif part.isdigit():
+            pages.append(int(part))
+        else:
+            print(f"Warning: ignoring bad page token '{part}'", file=sys.stderr)
+    # dedupe, keep order, clamp to valid range
+    seen, out = set(), []
+    for p in pages:
+        if 1 <= p <= page_count and p not in seen:
+            seen.add(p)
+            out.append(p)
+        elif not (1 <= p <= page_count):
+            print(f"Warning: page {p} out of range (1-{page_count})", file=sys.stderr)
+    return out
+
+
+def render_bbox(page, out_path, bbox, dpi, max_edge=MAX_EDGE_PX):
+    clip = fitz.Rect(*bbox)
+    long_pts = max(clip.width, clip.height) or 1.0
+    target_dpi = min(dpi, max_edge * 72.0 / long_pts)
+    zoom = target_dpi / 72.0
+    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=clip, alpha=False)
+    pix.save(out_path)
+    return pix.width, pix.height
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Render PDF page(s) to PNG on demand.")
+    ap.add_argument("pdf_path")
+    ap.add_argument("pages", help="e.g. 12  12,14  12-15  3,7-9  all")
+    ap.add_argument("--dpi", type=int, default=DEFAULT_DPI)
+    ap.add_argument("--bbox", help="x0,y0,x1,y1 in PDF points; crops a region")
+    args = ap.parse_args()
+
+    if not os.path.isfile(args.pdf_path):
+        print(f"Error: '{args.pdf_path}' is not a file.", file=sys.stderr)
+        sys.exit(1)
+
+    abs_pdf = os.path.abspath(args.pdf_path)
+    images_dir = os.path.join(resolve_cache_dir(abs_pdf), "images")
+    os.makedirs(images_dir, exist_ok=True)
+
+    bbox = None
+    if args.bbox:
+        try:
+            bbox = [float(x) for x in args.bbox.split(",")]
+            assert len(bbox) == 4
+        except Exception:
+            print("Error: --bbox must be x0,y0,x1,y1", file=sys.stderr)
+            sys.exit(1)
+
+    try:
+        doc = fitz.open(abs_pdf)
+    except Exception as e:
+        print(f"Error: failed to open PDF: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    with doc:
+        if doc.needs_pass and not doc.authenticate(""):
+            print("Error: PDF is encrypted and needs a password.", file=sys.stderr)
+            sys.exit(1)
+
+        page_nums = parse_pages(args.pages, len(doc))
+        if not page_nums:
+            print("Error: no valid pages to render.", file=sys.stderr)
+            sys.exit(1)
+
+        written = []
+        for n in page_nums:
+            page = doc[n - 1]
+            if bbox:
+                out = os.path.abspath(os.path.join(images_dir, f"page_{n:03d}_crop.png"))
+                render_bbox(page, out, bbox, args.dpi)
+            else:
+                out = os.path.abspath(os.path.join(images_dir, f"page_{n:03d}.png"))
+                render_page_png(page, out, dpi=args.dpi)
+            written.append(out)
+
+    # stdout: paths only, one per line, for the AI to consume
+    for w in written:
+        print(w)
+
+
+if __name__ == "__main__":
+    main()

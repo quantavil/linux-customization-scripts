@@ -109,6 +109,9 @@ PARSER_SCRIPT="${BASH_SOURCE[0]%/*}/aikular_parser.py"
 [[ ! -f "$PARSER_SCRIPT" ]] && PARSER_SCRIPT="$HOME/.local/bin/aikular_parser.py"
 [[ ! -f "$PARSER_SCRIPT" ]] && error_exit "Parser script not found at '$PARSER_SCRIPT'"
 
+RENDER_TOOL="${BASH_SOURCE[0]%/*}/aikular-render"
+[[ ! -x "$RENDER_TOOL" ]] && RENDER_TOOL="$HOME/.local/bin/aikular-render"
+
 # Serialise parsing of the same PDF; lock lives beside the cache dir.
 mkdir -p "$(dirname "$OUTPUT_DIR")"
 LOCK_FILE="${OUTPUT_DIR}.lock"
@@ -135,10 +138,18 @@ done
 
 setsid okular "$ABS_PDF_PATH" >/dev/null 2>&1 &
 
-SEED_PROMPT="You are analysing the PDF: $PDF_NAME.
+SEED_PROMPT="You are analysing the PDF: $PDF_NAME (path: $ABS_PDF_PATH).
 Document map: $OUTLINE_PATH. Read this FIRST.
 Full text: $CONTEXT_PATH (pages separated by <!-- page: N --> markers).
-Some pages contain figures, charts, tables or scans with little extractable text. Those pages include an absolute PNG path in context.md, tagged 'visual' or 'has_figure'. You can read images directly: when a question concerns such a page, open that PNG with your file/image read tool and read it. Do not claim a page is empty before checking its image.
+
+Pages tagged 'visual' or 'has_figure' already have a rendered PNG referenced by absolute path in context.md; read it with your image tool. The per-page 'chars/raster/draw' counts are only a heuristic hint and can be wrong.
+
+To see ANY page as an image (including pages the parser did not pre-render, or when text looks garbled or incomplete, or to inspect a diagram, table or scan), run this and read the PNG path(s) it prints:
+  $RENDER_TOOL \"$ABS_PDF_PATH\" <pages>
+Examples: $RENDER_TOOL \"$ABS_PDF_PATH\" 12   (or 12,14  or 12-15  or all)
+Zoom into a region: add --bbox x0,y0,x1,y1 (PDF points), optionally --dpi 220.
+
+Never claim a page is empty or unreadable before rendering it and looking.
 The PDF is also open in Okular for the human's reference.
 Always cite [Page N] when answering."
 

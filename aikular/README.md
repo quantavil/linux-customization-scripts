@@ -18,6 +18,8 @@ During parsing, each page is classified:
 
 A page is rendered when any of these hold: extractable characters `< 25`, a single raster image covers `> 12%` of the page, or the page has `>= 25` vector drawing ops. Renders are capped at a 1800 px long edge to keep image-token cost sane, and cached under `<cache>/images/page_NNN.png`.
 
+This parse-time classification is a **hint, not ground truth**. It will sometimes miss a figure or misjudge a page. So the AI is not limited to the pre-rendered set: it can rasterise any page on demand with `aikular-render` (below) and read the result. The seed prompt instructs it to render a page rather than ever claim a page is empty.
+
 In `context.md` each page is tagged, e.g.:
 
 ```
@@ -34,6 +36,7 @@ and visual pages carry an absolute PNG path the backend opens directly.
 aikular/
 ├── aikular           # Launcher orchestrator (Bash)
 ├── aikular_parser.py # PDF-to-Markdown parser, watermark filter, page renderer
+├── aikular-render    # On-demand page-to-PNG tool the AI calls itself
 ├── aikular-clean     # Cache cleanup (Bash)
 ├── aikular.desktop   # Dolphin right-click context menu integration
 └── README.md         # This manual
@@ -59,14 +62,15 @@ pip install --user pymupdf
 
 ### 3. Copy files to local paths
 ```bash
-cp aikular aikular_parser.py aikular-clean ~/.local/bin/
+cp aikular aikular_parser.py aikular-render aikular-clean ~/.local/bin/
 mkdir -p ~/.local/share/kio/servicemenus/
 cp aikular.desktop ~/.local/share/kio/servicemenus/
 ```
 
 ### 4. Grant executable permissions
 ```bash
-chmod +x ~/.local/bin/aikular ~/.local/bin/aikular_parser.py ~/.local/bin/aikular-clean
+chmod +x ~/.local/bin/aikular ~/.local/bin/aikular_parser.py \
+         ~/.local/bin/aikular-render ~/.local/bin/aikular-clean
 chmod +x ~/.local/share/kio/servicemenus/aikular.desktop
 ```
 
@@ -99,7 +103,19 @@ aikular --no-images /path/to/document.pdf
 
 Changing `--images` / `--no-images` on an already-cached PDF requires `--refresh` to take effect.
 
-### C. Cleaning the cache
+### C. On-demand page rendering (the AI, or you)
+The AI calls this itself when it needs to see a page, so a wrong parse-time guess is never a dead end. It writes into the same cache images folder and prints the PNG path(s):
+```bash
+aikular-render /path/to/document.pdf 12          # single page
+aikular-render /path/to/document.pdf 12,14,20     # several
+aikular-render /path/to/document.pdf 12-15        # range
+aikular-render /path/to/document.pdf all          # every page
+# zoom into a region (PDF points), sharper:
+aikular-render /path/to/document.pdf 12 --bbox 60,400,540,700 --dpi 220
+```
+Cropped renders are saved as `page_NNN_crop.png` so they never clobber the full-page render.
+
+### D. Cleaning the cache
 ```bash
 aikular --clean /path/to/document.pdf
 # or directly

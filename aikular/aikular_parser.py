@@ -402,6 +402,9 @@ def parse_pdf(pdf_path, output_dir, images_mode="auto", dpi=DEFAULT_DPI):
                 f.write("- Tables are Markdown tables.\n")
                 f.write("- Visual pages (figures, charts, scans) reference an absolute PNG path.\n")
                 f.write("  Read that PNG with your image/file read tool to see the page.\n")
+                f.write("- The per-page chars/raster/draw counts are heuristic HINTS, not ground truth.\n")
+                f.write("- To view ANY page (including ones with no PNG), run `aikular-render <pdf> <pages>`\n")
+                f.write("  and read the path(s) it prints. Never assume a page is empty before rendering it.\n")
         except OSError as e:
             raise OSError(f"Failed to write outline '{outline_path}': {e}")
 
