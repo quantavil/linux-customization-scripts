@@ -1,4 +1,15 @@
 # ==============================================================================
+# ENVIRONMENT AND PATH CONFIGURATION
+# ==============================================================================
+# Ensure ~/.local/bin is in PATH for custom user scripts
+if not contains "$HOME/.local/bin" $PATH
+    set -gx PATH "$HOME/.local/bin" $PATH
+end
+
+# Groq API Key for the 'ai' command line assistant (obtain from console.groq.com)
+# set -gx GROQ_API_KEY "your_groq_api_key_here"
+
+# ==============================================================================
 # NATIVE INTERACTIVE SHELL INITIALIZATION
 # ==============================================================================
 if status is-interactive

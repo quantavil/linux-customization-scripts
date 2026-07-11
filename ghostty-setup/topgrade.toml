@@ -20,5 +20,4 @@ use_sudo = true
 
 # Preserved interactive script macros
 "bun" = "curl -fsSL https://bun.sh/install | bash"
-"pls" = "curl -sSfL https://raw.githubusercontent.com/colus001/pls/main/install.sh | sh"
 "fahhh" = "curl -fsSL https://raw.githubusercontent.com/0xN1nja/fahhh/master/install.sh | bash"
