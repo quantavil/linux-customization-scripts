@@ -30,6 +30,7 @@ A configuration and deployment repository for setting up a high-performance term
 - Pipe and search modes bypass history to prevent one-shot transforms from polluting context.
 - `tee` after the jq streaming filter captures the full response for history without breaking real-time streaming.
 - Strip all reasoning blocks from non-streaming API completions using jq `gsub("<(think|reasoning)>[\\s\\S]*?</(think|reasoning)>"; "")`.
+- Sanitize summary on load (`load_history`) to clean up pre-existing `<think>` blocks in `history.json`.
 - To prevent EXIT trap from removing locks held by other concurrent instances, use a `HOLDS_LOCK` flag to track lock ownership.
 - Parse the last HTTP status line from headers (e.g. via `awk`) to avoid silent failure on `100 Continue` responses.
 
@@ -38,4 +39,6 @@ A configuration and deployment repository for setting up a high-performance term
   - **Fix**: Added `HOLDS_LOCK` ownership flag and only unlock if this instance acquired it.
 - **Blunder**: Reading the first line of headers failed to detect 200 OK when `100 Continue` was returned first.
   - **Fix**: Parsed the last status line using `awk`.
+- **Blunder**: Repetitive summary formatting loop occurred due to a persisted `<think>` block inside `history.json`'s summary field.
+  - **Fix**: Added `gsub` sanitization to `load_history` to strip `<think>` tags on load.
 

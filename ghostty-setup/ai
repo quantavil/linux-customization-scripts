@@ -83,7 +83,7 @@ UPDATED_AT=0
 load_history() {
     if [ -f "$HISTORY_FILE" ]; then
         MESSAGES=$(jq -c '.messages // []' "$HISTORY_FILE" 2>/dev/null) || MESSAGES='[]'
-        SUMMARY=$(jq -r '.summary // ""' "$HISTORY_FILE" 2>/dev/null) || SUMMARY=""
+        SUMMARY=$(jq -r '.summary // "" | gsub("<(think|reasoning)>[\\s\\S]*?</(think|reasoning)>"; "")' "$HISTORY_FILE" 2>/dev/null) || SUMMARY=""
         UPDATED_AT=$(jq -r '.updated_at // 0' "$HISTORY_FILE" 2>/dev/null) || UPDATED_AT=0
     else
         MESSAGES='[]'; SUMMARY=""; UPDATED_AT=0
