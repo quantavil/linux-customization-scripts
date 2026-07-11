@@ -35,6 +35,10 @@ A collection of standalone utilities, configuration scripts, and customization s
 ## Insights
 - Keep scripts focused and surgical to avoid breaking systems.
 - Streaming responses with curl & jq can be done efficiently in a single line pipeline. Use `sed -nu '/^data: \[DONE\]/d; s/^data: //; p'` before `jq -j --unbuffered` to gracefully handle both SSE lines and pretty-printed API error JSON.
+- In `jq`, negation of `.prop` must be written as `(.prop | not)` since `not .prop` is parsed as `(not) .prop`.
+- Non-streaming API calls (like summarization) can contain `<think>` blocks. Strip them using jq `sub("<(think|reasoning)>[\\s\\S]*?</(think|reasoning)>"; "")` before saving to history.
 
 ## Blunders
-- None logged.
+- **Blunder**: `jq: error: Cannot index boolean with string ("started")` during streaming.
+  - **Root Cause**: Outer `if` lacked `else .` returning false, and `not .started` evaluated as `(not) .started`.
+  - **Fix**: Added `else .` to return state, and wrapped negation as `(.started | not)`.
