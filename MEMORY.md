@@ -1,42 +1,40 @@
 # Project: linux-customization-scripts
 
 ## Overview
-A collection of modular, independent scripts, configurations, and automation tools designed to customize, optimize, and enhance a Linux desktop system environment (e.g., Ghostty, Fish shell, Tmux, network tools, and media utilities) based on Arch Linux.
+A collection of standalone utilities, configuration scripts, and customization setups for Linux desktop environments (e.g., Ghostty, MPV, Dolphin, Wireguard, AdGuard, Git automation). The scripts are written in Bash, Fish, Python, etc.
 
 ## Structure
-```
-/home/quantavil/Documents/Project/linux-customization-scripts/
-├── adguard-home/         # AdGuard Home DNS server installer and configs
-├── aikular/              # Okular & AI PDF analysis pipeline (switchable agy/opencode backends)
-├── browser-shortcuts/    # Custom web browser shortcut mappings
-├── bt/                   # Bluetooth connection automation utilities
-├── copyparty/            # Copyparty media/file server setups
-├── dolphin-tag/          # File tagging helper tools for Dolphin file manager
-├── ghostty-setup/        # Ghostty terminal emulator configuration and fish shell integrations
-│   ├── config.fish       # Core Fish interactive setup and tmux workspace profiles
-│   ├── README.md         # Deployment steps
-│   └── MEMORY.md         # Localized component memory
-├── git-autosquash/       # Git autosquash automation utility
-├── git-autosync/         # Automatic git synchronization tools
-├── mpv/                  # MPV media player configurations and setup scripts
-├── ms-fonts/             # Microsoft Core Fonts installation helper
-├── shortcut/             # System keyboard shortcut utilities
-└── wgcf/                 # WireGuard Cloudflare WARP client setup script
-```
+- `adguard-home/`       # AdGuard Home setup scripts
+- `aikular/`            # Custom markdown note helper (Python parser/render scripts)
+- `browser-shortcuts/`  # Custom browser shortcuts and keys
+- `bt/`                 # Bluetooth configuration helper
+- `copyparty/`          # Setup for file-sharing web server (copyparty)
+- `dolphin-tag/`        # Tagging support scripts for Dolphin file manager
+- `ghostty-setup/`      # Setup/config files for Ghostty & Fish (includes lightweight 'ai' Groq CLI)
+- `git-autosquash/`     # Git auto-squashing scripts
+- `git-autosync/`       # Automated git sync utilities
+- `mpv/`                # MPV media player configurations
+- `ms-fonts/`           # Microsoft Fonts installation helpers
+- `shortcut/`           # Custom keyboard/launcher shortcuts
+- `wgcf/`               # Cloudflare WARP (wgcf) setup scripts
+- `MEMORY.md`           # This memory file
 
 ## Conventions
-- **Modular Autonomy**: Each subdirectory is a self-contained component with apply and revert scripts.
-- **Safe Execution**: Automation scripts should prompt user on steps requiring manual configurations rather than silently assuming/failing.
+- Every customization/feature has its own subdirectory.
+- Scripts are modular and typically include an apply script (e.g., `apply_*.sh`) and a revert script (e.g., `revert_*.sh`).
+- Use minimal and direct implementations.
 
 ## Dependencies & Setup
-- Varies by module; core configurations rely on pacman/paru (Arch Linux).
-- Key tools include Ghostty, Fish, Tmux, Zoxide, Eza, Bat, Fzf.
+- Shell environments: Bash/Fish.
+- Python 3.x is used for some utilities (e.g. `aikular`).
+- `jq` and `curl` for the `ai` command CLI.
 
 ## Critical Information
-- Ensure stateful custom functions avoid side-effects across shell restarts.
+- None currently.
 
 ## Insights
-- Keep functions in config.fish optimized by utilizing Fish builtins rather than launching subshells where possible.
+- Keep scripts focused and surgical to avoid breaking systems.
+- Streaming responses with curl & jq can be done efficiently in a single line pipeline. Use `sed -nu '/^data: \[DONE\]/d; s/^data: //; p'` before `jq -j --unbuffered` to gracefully handle both SSE lines and pretty-printed API error JSON.
 
 ## Blunders
-- None recorded yet.
+- None logged.

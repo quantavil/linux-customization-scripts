@@ -1,40 +1,36 @@
-My bad. Let's fix the naming to make it explicitly a Ghostty and Fish guide, and drop the redundant code wall since your `config.fish` is already locked in.
+# Ghostty + Fish Environment Setup Guide
 
-# Ghostty + Fish High-Performance Environment Deployment Guide
+## Step 1: Install Packages
 
-## Step 1: Core Stack Installation
-
-Install the native shell, GPU terminal, micro text editor, asynchronous file manager, fonts, and utilities in one transaction:
+Install the required shell, terminal, fonts, and CLI utilities:
 
 ```bash
 sudo pacman -S ghostty fish yazi micro ttf-jetbrains-mono-nerd \
-  fzf bat eza zoxide fastfetch wl-clipboard firejail bun tmux topgrade
-
+  fzf bat eza zoxide fastfetch wl-clipboard firejail bun tmux topgrade jq
 ```
 
 ---
 
-## Step 2: Configure System Shell Registry
+## Step 2: Set Fish as the Default Shell
 
-Whitelist the Fish binary paths in the system security register and set it as your default login shell:
+Add Fish to `/etc/shells` and configure it as your default login shell:
 
 ```bash
-# Whitelist binaries in PAM system security register
+# Add Fish to /etc/shells
 echo "/usr/bin/fish" | sudo tee -a /etc/shells
 echo "/bin/fish" | sudo tee -a /etc/shells
 
-# Set default login shell for your user account
+# Set Fish as default login shell
 sudo chsh -s /usr/bin/fish $USER
-
 ```
 
 ---
 
-## Step 3: Deployment of Profiles and Configuration Files
+## Step 3: Configure Applications
 
-### 1. Ghostty Terminal Profile (`~/.config/ghostty/config`)
+### 1. Ghostty Config (`~/.config/ghostty/config`)
 
-Create the directory and write the configuration parameters to enforce the native Catppuccin theme, JetBrainsMono font, and borderless layout:
+Configure Ghostty with the Catppuccin Mocha theme, JetBrainsMono font, Fish shell, and borderless window layout:
 
 ```bash
 mkdir -p ~/.config/ghostty
@@ -46,12 +42,11 @@ font-size = 12
 command = /usr/bin/fish
 window-decoration = false
 EOF
-
 ```
 
-### 2. Zero-Overhead Shell Prompt (`~/.config/fish/functions/fish_prompt.fish`)
+### 2. Fish Prompt (`~/.config/fish/functions/fish_prompt.fish`)
 
-Deploy the prompt logic to eliminate external process forking by rendering path definitions and Git status tracking entirely within internal shell memory:
+Configure a clean prompt with native Git integration:
 
 ```bash
 mkdir -p ~/.config/fish/functions
@@ -63,34 +58,30 @@ function fish_prompt
     set -l green (set_color a6e3a1)
     set -l normal (set_color normal)
 
-    # Path rendering + native Git status tracking + prompt indicator
+    # Output prompt with pwd, native Git status, and indicator
     echo -n -s $mauve (prompt_pwd) $normal $green (fish_vcs_prompt) $normal $blue " ❯ " $normal
 end
 EOF
-
 ```
 
-### 3. Environment Initializations & Wrappers (`~/.config/fish/config.fish`)
+### 3. Fish Shell Config (`~/.config/fish/config.fish`)
 
-Open the configuration file using `micro`:
+Open the Fish configuration file to configure aliases, utility functions (Yazi wrapper, orphan package scrubbers, size tools), and tmux integrations:
 
 ```bash
 micro ~/.config/fish/config.fish
-
 ```
 
-Populate this file with the complete, fully commented configuration script containing your aliases, security sandboxing, high-performance functions (Yazi wrapper, orphans scrubber, fuzzy-remove, and pacsize utilities), and Tmux programmatic workspace engines.
+### 4. Tmux Layout Commands
 
-### 4. Tmux Programmatic Workspace Engines
-
-The configuration registers custom tmux layouts to accelerate multi-pane terminal workflows:
+The Fish configuration includes aliases for custom tmux pane layouts:
 - `wd2c`: 2 columns split evenly down the middle.
-- `wd3g`: 3-pane grid (Left: `agy --dangerously-skip-permissions`, Top Right: `timr`, Bottom Right: `lowfi`).
+- `wd3g`: 3-pane grid.
 - `wd4g`: 4-pane balanced 2x2 grid.
 
-### 5. High-Performance Tmux Configuration (`~/.tmux.conf` or `~/.config/tmux/tmux.conf`)
+### 5. Tmux Configuration (`~/.tmux.conf` or `~/.config/tmux/tmux.conf`)
 
-Deploy the configuration parameters to enable mouse support, 1-based pane and window indexing, and 24-bit True Color rendering in Ghostty:
+Configure tmux to support mouse scrolling, True Color, and 1-based window/pane indexing:
 
 ```tmux
 set -g mouse on
@@ -100,21 +91,91 @@ set -g base-index 1
 setw -g pane-base-index 1
 ```
 
-### 6. Topgrade System Updater (`~/.config/topgrade.toml`)
+### 6. Topgrade Config (`~/.config/topgrade.toml`)
 
-Deploy the Topgrade configuration to automate system-wide updates (Arch packages via paru, flatpak, custom scripts):
+Copy the Topgrade configuration file to automate system updates (e.g. system packages, flatpaks, custom update scripts):
 
 ```bash
 cp topgrade.toml ~/.config/topgrade.toml
 ```
 
+### 7. Groq CLI Assistant (`~/.local/bin/ai`)
+
+Copy the `ai` script to your local bin directory and make it executable:
+
+```bash
+mkdir -p ~/.local/bin
+cp ai ~/.local/bin/ai
+chmod +x ~/.local/bin/ai
+```
+
+On first run, the script will guide you through the interactive setup to save your API key and select a default model (using `fzf` if available):
+
+```bash
+ai hello
+```
+
+Alternatively, you can manually trigger configuration or change the configured key/model at any time:
+
+```bash
+ai --configure
+```
+
+You can also override the stored configuration by setting the environment variable in your shell:
+
+```fish
+set -gx GROQ_API_KEY "your_actual_groq_api_key"
+```
+
+Query the assistant directly, pipe inputs to it, or run a live web search using the `-s` / `--search` flag:
+
+```bash
+# General query (continues conversation)
+ai explain quantum computing in one sentence
+
+# Follow-up (remembers previous context)
+ai can you elaborate on that?
+
+# Web search (no history saved)
+ai -s what is the current weather in New York
+
+# Piped input (no history saved)
+echo "write a quick python function to reverse a string" | ai
+```
+
+#### Conversation Memory
+
+The assistant automatically remembers conversation context between invocations. When context grows too large (~20K tokens), older messages are summarized into bullet points while recent exchanges are kept verbatim.
+
+```bash
+# Start a new conversation (clears history)
+ai -n hello there
+
+# Just clear history without a query
+ai -n
+
+# Check current conversation info
+ai --status
+```
+
+#### Interactive Chat Mode
+
+Enter a REPL for multi-turn conversations without retyping `ai`:
+
+```bash
+ai -i
+```
+
+Type `exit`, `quit`, `bye`, or press Ctrl+D to leave.
+
+> **Note:** Piped input and web search (`-s`) skip history to avoid polluting conversation context with one-off queries. Conversations idle for more than 3 hours show a warning.
+
 ---
 
-## Step 4: System Synchronization
+## Step 4: Apply Configuration
 
 ```bash
 source ~/.config/fish/config.fish
-
 ```
 
-Log completely out of your active desktop session and log back in to apply the new user shells and path layers. Open **Ghostty** directly from your application runner to register the clean, accelerated workspace.
+Finally, log out of your session and log back in to apply shell/path changes. Open **Ghostty** to start using the new environment.

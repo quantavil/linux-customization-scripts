@@ -1,0 +1,386 @@
+#!/bin/sh
+# Lightweight CLI assistant with conversation memory using Groq API, curl + jq.
+
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/groq-cli/config.json"
+HISTORY_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/groq-cli"
+HISTORY_FILE="$HISTORY_DIR/history.json"
+DEFAULT_MODEL="llama-3.3-70b-versatile"
+SEARCH_MODEL="compound-beta"
+API_BASE="https://api.groq.com/openai/v1"
+CONTEXT_THRESHOLD=80000   # chars (~20K tokens)
+EXPIRY_SECONDS=10800      # 3 hours
+KEEP_RECENT=8             # messages to keep verbatim during summarization (4 exchanges)
+
+# POSIX-compliant literal newline for splitting strings
+nl='
+'
+
+# Cleanup
+TMP_FILES=""
+cleanup() { [ -z "$TMP_FILES" ] || rm -f $TMP_FILES; }
+trap cleanup EXIT
+
+die() { printf '%s\n' "$*" >&2; exit 1; }
+
+show_help() {
+    cat <<'EOF'
+Usage:
+  ai [prompt...]             Ask a question (continues conversation)
+  ai -s [prompt...]          Web search (no history)
+  ai -i                      Interactive chat mode
+  ai -n [prompt...]          Start a new conversation
+  ai -p "prompt" [query...]  Override system prompt
+  ai --status                Show session info
+  echo "..." | ai            Pipe input (no history)
+  ai --configure             Configure API key & default model
+  ai --help                  Show this help
+EOF
+}
+
+run_configure() {
+    printf 'Enter your Groq API Key: '
+    read -r key
+    [ -n "$key" ] || die "API key cannot be empty."
+
+    printf 'Validating API key and fetching models... '
+
+    hdr_conf=$(mktemp) || die "Failed to create temporary file."
+    TMP_FILES="$TMP_FILES $hdr_conf"
+    ( umask 077; printf 'Authorization: Bearer %s\n' "$key" > "$hdr_conf" )
+
+    resp=$(curl -sS -m 30 -w '\n%{http_code}' \
+        -H "Content-Type: application/json" \
+        -H @"$hdr_conf" "$API_BASE/models")
+    code=${resp##*${nl}}
+    body=${resp%${nl}*}
+    rm -f "$hdr_conf"
+
+    [ "$code" = "200" ] || {
+        echo failed
+        err=$(printf '%s' "$body" | jq -r '.error.message // "Unknown error"')
+        die "Groq error: $err"
+    }
+    echo done
+
+    models=$(printf '%s' "$body" | jq -r \
+        '.data[].id | select(test("whisper|guard|tts|distil";"i")|not)' | sort)
+
+    if command -v fzf >/dev/null 2>&1; then
+        sel=$(printf '%s\n' "$models" | fzf --header='Select default model:')
+    else
+        echo; echo 'Available chat models:'
+        printf '%s\n' "$models" | nl -w2 -s') '
+        printf '\nEnter number: '; read -r n
+        sel=$(printf '%s\n' "$models" | sed -n "${n}p")
+    fi
+    [ -n "$sel" ] || die "No model selected."
+
+    printf 'Optional default system prompt (Enter to skip): '
+    read -r sys
+
+    mkdir -p "$(dirname "$CONFIG_FILE")"
+    ( umask 077; jq -n \
+        --arg key "$key" --arg mod "$sel" --arg sys "$sys" \
+        '{api_key:$key, model:$mod, system_prompt:$sys}' > "$CONFIG_FILE" )
+    echo "Saved to $CONFIG_FILE"
+}
+
+# --- Parse options first ---
+SEARCH_MODE=0
+INTERACTIVE_MODE=0
+NEW_SESSION=0
+SHOW_STATUS=0
+CLI_SYSTEM_PROMPT=""
+HAS_CLI_SYSTEM_PROMPT=0
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -s|--search) SEARCH_MODE=1; shift ;;
+        -i|--interactive) INTERACTIVE_MODE=1; shift ;;
+        -n|--new) NEW_SESSION=1; shift ;;
+        -p|--system)
+            [ -n "$2" ] || die "Option $1 requires an argument."
+            CLI_SYSTEM_PROMPT="$2"; HAS_CLI_SYSTEM_PROMPT=1; shift 2 ;;
+        --status) SHOW_STATUS=1; shift ;;
+        --configure) run_configure; exit 0 ;;
+        -h|--help)   show_help; exit 0 ;;
+        --) shift; break ;;
+        -*) die "Unknown option: $1" ;;
+        *)  break ;;
+    esac
+done
+
+# --- Early exits (no API key or auth needed) ---
+
+# --status: local-only operation
+if [ "$SHOW_STATUS" -eq 1 ]; then
+    if [ ! -f "$HISTORY_FILE" ]; then
+        echo "No conversation history."
+        exit 0
+    fi
+    MESSAGES=$(jq -c '.messages // []' "$HISTORY_FILE" 2>/dev/null) || MESSAGES='[]'
+    SUMMARY=$(jq -r '.summary // ""' "$HISTORY_FILE" 2>/dev/null) || SUMMARY=""
+    UPDATED_AT=$(jq -r '.updated_at // 0' "$HISTORY_FILE" 2>/dev/null) || UPDATED_AT=0
+
+    msg_count=$(printf '%s' "$MESSAGES" | jq 'length')
+    exchanges=$((msg_count / 2))
+    total_chars=$(printf '%s%s' "$SUMMARY" "$MESSAGES" | wc -c)
+    est_tokens=$((total_chars / 4))
+
+    now=$(date +%s)
+    age=$((now - UPDATED_AT))
+    if [ "$age" -lt 60 ]; then
+        age_str="${age}s"
+    elif [ "$age" -lt 3600 ]; then
+        age_str="$((age / 60))m"
+    else
+        age_str="$((age / 3600))h $((age % 3600 / 60))m"
+    fi
+
+    echo "Messages: $msg_count ($exchanges exchanges)"
+    echo "Context: ~$est_tokens tokens (est.)"
+    echo "Age: $age_str"
+    if [ -n "$SUMMARY" ]; then
+        printf 'Summary: %s\n' "$(printf '%s' "$SUMMARY" | head -c 200)"
+    else
+        echo "Summary: None"
+    fi
+    exit 0
+fi
+
+# -n alone: just delete history, no API needed
+if [ "$NEW_SESSION" -eq 1 ] && [ "$INTERACTIVE_MODE" -eq 0 ] && [ "$#" -eq 0 ] && [ -t 0 ]; then
+    rm -f "$HISTORY_FILE"
+    echo "Conversation cleared."
+    exit 0
+fi
+
+# --- Load config (only needed for API calls beyond this point) ---
+API_KEY="${GROQ_API_KEY:-}"
+MODEL=""
+CONFIG_SYSTEM_PROMPT=""
+
+if [ -f "$CONFIG_FILE" ]; then
+    [ -n "$API_KEY" ] || API_KEY=$(jq -r '.api_key // empty' "$CONFIG_FILE")
+    MODEL=$(jq -r '.model // empty' "$CONFIG_FILE")
+    CONFIG_SYSTEM_PROMPT=$(jq -r '.system_prompt // empty' "$CONFIG_FILE")
+fi
+
+if [ -z "$API_KEY" ]; then
+    echo "No Groq configuration found."
+    run_configure
+    [ -f "$CONFIG_FILE" ] || die "Configuration failed."
+    API_KEY=$(jq -r '.api_key // empty' "$CONFIG_FILE")
+    MODEL=$(jq -r '.model // empty' "$CONFIG_FILE")
+    CONFIG_SYSTEM_PROMPT=$(jq -r '.system_prompt // empty' "$CONFIG_FILE")
+fi
+
+[ -n "$API_KEY" ] || die "No API key."
+[ -n "$MODEL" ] || MODEL="$DEFAULT_MODEL"
+
+# Resolve system prompt
+if [ "$HAS_CLI_SYSTEM_PROMPT" -eq 1 ]; then
+    SYSTEM_PROMPT="$CLI_SYSTEM_PROMPT"
+else
+    SYSTEM_PROMPT="$CONFIG_SYSTEM_PROMPT"
+fi
+
+[ "$SEARCH_MODE" -eq 1 ] && MODEL="$SEARCH_MODEL"
+
+# --- Auth header (shared by queries and summarization) ---
+hdr=$(mktemp) || die "Failed to create temporary file."
+TMP_FILES="$TMP_FILES $hdr"
+( umask 077; printf 'Authorization: Bearer %s\n' "$API_KEY" > "$hdr" )
+
+# --- History state ---
+MESSAGES='[]'
+SUMMARY=""
+UPDATED_AT=0
+
+USE_HISTORY=1
+[ ! -t 0 ] && USE_HISTORY=0
+[ "$SEARCH_MODE" -eq 1 ] && USE_HISTORY=0
+
+load_history() {
+    if [ -f "$HISTORY_FILE" ]; then
+        MESSAGES=$(jq -c '.messages // []' "$HISTORY_FILE" 2>/dev/null) || MESSAGES='[]'
+        SUMMARY=$(jq -r '.summary // ""' "$HISTORY_FILE" 2>/dev/null) || SUMMARY=""
+        UPDATED_AT=$(jq -r '.updated_at // 0' "$HISTORY_FILE" 2>/dev/null) || UPDATED_AT=0
+    else
+        MESSAGES='[]'
+        SUMMARY=""
+        UPDATED_AT=0
+    fi
+}
+
+save_history() {
+    mkdir -p "$HISTORY_DIR"
+    ( umask 077; printf '%s' "$MESSAGES" | jq -c \
+        --arg summary "$SUMMARY" \
+        --argjson ts "$(date +%s)" \
+        '{summary: $summary, updated_at: $ts, messages: .}' > "$HISTORY_FILE" )
+}
+
+check_expiry() {
+    [ "$UPDATED_AT" -eq 0 ] 2>/dev/null && return
+    now=$(date +%s)
+    age=$((now - UPDATED_AT))
+    [ "$age" -le "$EXPIRY_SECONDS" ] && return
+    hrs=$((age / 3600))
+    mins=$(( (age % 3600) / 60 ))
+    if [ "$hrs" -gt 0 ]; then
+        printf '(Session idle %dh %dm. Use -n to start fresh.)\n' "$hrs" "$mins" >&2
+    else
+        printf '(Session idle %dm. Use -n to start fresh.)\n' "$mins" >&2
+    fi
+}
+
+summarize_if_needed() {
+    context_size=$(printf '%s%s' "$SUMMARY" "$MESSAGES" | wc -c)
+    [ "$context_size" -le "$CONTEXT_THRESHOLD" ] && return
+
+    msg_count=$(printf '%s' "$MESSAGES" | jq 'length')
+    [ "$msg_count" -le "$KEEP_RECENT" ] && return
+
+    printf '(Summarizing older context...)\n' >&2
+
+    old_msgs=$(printf '%s' "$MESSAGES" | jq -c ".[:-$KEEP_RECENT]")
+    keep_msgs=$(printf '%s' "$MESSAGES" | jq -c ".[-$KEEP_RECENT:]")
+
+    # Build conversation text for summarization
+    conv_text=$(printf '%s' "$old_msgs" | jq -r 'map(.role + ": " + .content) | join("\n\n")')
+
+    if [ -n "$SUMMARY" ]; then
+        sum_input="Previous summary:
+$SUMMARY
+
+New conversation to incorporate:
+$conv_text"
+    else
+        sum_input="$conv_text"
+    fi
+
+    sum_payload=$(jq -cn \
+        --arg model "$MODEL" \
+        --arg conv "$sum_input" \
+        '{model: $model, stream: false,
+          messages: [
+            {role: "system", content: "Summarize this conversation as concise bullet points. Focus on: key facts, decisions made, code specifics, and pending items. Omit greetings and filler."},
+            {role: "user", content: $conv}
+          ]}')
+
+    sum_resp=$(curl -sS -m 120 -X POST "$API_BASE/chat/completions" \
+        -H "Content-Type: application/json" \
+        -H @"$hdr" \
+        --data "$sum_payload")
+
+    new_summary=$(printf '%s' "$sum_resp" | jq -r '.choices[0].message.content // ""')
+
+    if [ -n "$new_summary" ]; then
+        SUMMARY="$new_summary"
+        MESSAGES="$keep_msgs"
+        printf '(Context summarized. Continuing with recent messages.)\n' >&2
+    else
+        printf '(Summarization failed. Continuing with full context.)\n' >&2
+    fi
+}
+
+# --- --new with prompt or -i: clear history, then continue ---
+[ "$NEW_SESSION" -eq 1 ] && rm -f "$HISTORY_FILE"
+
+# --- Stream a query and optionally save to history ---
+send_query() {
+    query="$1"
+
+    # Append user message if using history
+    if [ "$USE_HISTORY" -eq 1 ]; then
+        MESSAGES=$(printf '%s' "$MESSAGES" | jq -c --arg c "$query" '. + [{role:"user",content:$c}]')
+        summarize_if_needed
+    fi
+
+    # Build payload
+    if [ "$USE_HISTORY" -eq 1 ]; then
+        JSON_PAYLOAD=$(jq -cn \
+            --arg model "$MODEL" \
+            --arg sys "$SYSTEM_PROMPT" \
+            --arg summary "$SUMMARY" \
+            --argjson msgs "$MESSAGES" \
+            '{model: $model, stream: true,
+              messages: (
+                (if $sys != "" then [{role:"system",content:$sys}] else [] end) +
+                (if $summary != "" then [{role:"system",content:("Previous conversation context:\n" + $summary)}] else [] end) +
+                $msgs
+              )}')
+    else
+        JSON_PAYLOAD=$(jq -cn \
+            --arg model "$MODEL" \
+            --arg sys "$SYSTEM_PROMPT" \
+            --arg msg "$query" \
+            '{model:$model, stream:true,
+              messages:(if $sys != "" then
+                [{role:"system",content:$sys},{role:"user",content:$msg}]
+              else
+                [{role:"user",content:$msg}]
+              end)}')
+    fi
+
+    # Stream + capture response
+    response_file=$(mktemp) || die "Failed to create temporary file."
+    TMP_FILES="$TMP_FILES $response_file"
+
+    curl -sS -N -m 600 -X POST "$API_BASE/chat/completions" \
+        -H "Content-Type: application/json" \
+        -H @"$hdr" \
+        --data "$JSON_PAYLOAD" \
+    | sed -nu '/^data: \[DONE\]/d; s/^data: //; p' \
+    | jq -n -j --unbuffered 'foreach inputs as $line ({thinking: false, started: false, out: ""}; ($line.choices[0].delta.content // $line.error.message // "" as $c | if ($c | contains("<think>")) then .thinking = true | .out = "" elif ($c | contains("</think>")) then .thinking = false | .out = "" elif .thinking then .out = "" else if .started then .out = $c else ($c | sub("^[ \\n\\r\\t]+"; "")) as $s | if $s != "" then .started = true | .out = $s else .out = "" end end end); .out)' \
+    | tee "$response_file"
+
+    printf '\n'
+
+    # Save assistant response to history
+    if [ "$USE_HISTORY" -eq 1 ]; then
+        response=$(cat "$response_file")
+        if [ -n "$response" ]; then
+            MESSAGES=$(printf '%s' "$MESSAGES" | jq -c --arg c "$response" '. + [{role:"assistant",content:$c}]')
+            save_history
+        fi
+    fi
+    rm -f "$response_file"
+}
+
+# --- Interactive mode ---
+if [ "$INTERACTIVE_MODE" -eq 1 ]; then
+    [ -t 0 ] || die "Interactive mode requires a terminal."
+
+    if [ "$USE_HISTORY" -eq 1 ]; then
+        load_history
+        check_expiry
+    fi
+
+    while printf 'ai> ' && IFS= read -r line; do
+        [ -z "$line" ] && continue
+        case "$line" in exit|quit|bye) break ;; esac
+        send_query "$line"
+    done
+    exit 0
+fi
+
+# --- One-shot mode ---
+PROMPT="$*"
+if [ ! -t 0 ]; then
+    stdin_data=$(cat)
+    if [ -n "$PROMPT" ]; then
+        PROMPT="${stdin_data}${nl}${PROMPT}"
+    else
+        PROMPT="$stdin_data"
+    fi
+fi
+[ -n "$PROMPT" ] || { show_help; exit 0; }
+
+if [ "$USE_HISTORY" -eq 1 ]; then
+    load_history
+    check_expiry
+fi
+
+send_query "$PROMPT"
