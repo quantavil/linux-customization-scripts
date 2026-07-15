@@ -43,8 +43,8 @@ done
 1. **Clone the repository:**
 
    ```bash
-   git clone https://github.com/quantavil/linux-customization-scripts.git
-   cd linux-customization-scripts/stt-groq
+   git clone https://github.com/quantavil/linux-setup.git
+   cd linux-setup/groq-stt
    ```
 
    Or save `stt.sh` directly to `~/stt.sh`.

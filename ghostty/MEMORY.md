@@ -1,12 +1,11 @@
-# Project: ghostty-setup
+# Project: ghostty
 
 ## Overview
 A configuration and deployment repository for setting up a high-performance terminal and shell environment using Ghostty (terminal emulator) and Fish shell, optimized with various CLI utilities (e.g., eza, fzf, yazi, btop, fastfetch).
 
 ## Structure
 ```
-/home/quantavil/Documents/Project/linux-customization-scripts/ghostty-setup/
-├── ai              # CLI AI assistant with conversation memory using Groq API
+/home/quantavil/Documents/Project/linux-setup/ghostty/
 ├── config.fish     # Fish shell configuration file (aliases, tmux layouts, functions)
 ├── topgrade.toml   # Topgrade system updater configuration (Arch/paru, flatpak, custom scripts)
 ├── README.md       # Deployment and installation guide for the Ghostty + Fish environment

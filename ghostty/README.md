@@ -99,78 +99,7 @@ Copy the Topgrade configuration file to automate system updates (e.g. system pac
 cp topgrade.toml ~/.config/topgrade.toml
 ```
 
-### 7. Groq CLI Assistant (`~/.local/bin/ai`)
 
-Copy the `ai` script to your local bin directory and make it executable:
-
-```bash
-mkdir -p ~/.local/bin
-cp ai ~/.local/bin/ai
-chmod +x ~/.local/bin/ai
-```
-
-On first run, the script will guide you through the interactive setup to save your API key and select a default model (using `fzf` if available):
-
-```bash
-ai hello
-```
-
-Alternatively, you can manually trigger configuration or change the configured key/model at any time:
-
-```bash
-ai --configure
-```
-
-You can also override the stored configuration by setting the environment variable in your shell:
-
-```fish
-set -gx GROQ_API_KEY "your_actual_groq_api_key"
-```
-
-Query the assistant directly, pipe inputs to it, or run a live web search using the `-s` / `--search` flag:
-
-```bash
-# General query (continues conversation)
-ai explain quantum computing in one sentence
-
-# Follow-up (remembers previous context)
-ai can you elaborate on that?
-
-# Web search (no history saved)
-ai -s what is the current weather in New York
-
-# Piped input (no history saved)
-echo "write a quick python function to reverse a string" | ai
-```
-
-#### Conversation Memory
-
-The assistant automatically remembers conversation context between invocations. When context grows too large (~20K tokens), older messages are summarized into bullet points while recent exchanges are kept verbatim.
-
-```bash
-# Start a new conversation (clears history)
-ai -n hello there
-
-# Just clear history without a query
-ai -n
-
-# Check current conversation info
-ai --status
-```
-
-#### Interactive Chat Mode
-
-Enter a REPL for multi-turn conversations without retyping `ai`:
-
-```bash
-ai -i
-```
-
-Type `exit`, `quit`, `bye`, or press Ctrl+D to leave.
-
-> **Note:** Piped input and web search (`-s`) skip history to avoid polluting conversation context with one-off queries. Conversations idle for more than 3 hours show a warning.
-
----
 
 ## Step 4: Apply Configuration
 
