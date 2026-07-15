@@ -10,7 +10,7 @@ HISTORY_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/groq-cli"
 CONFIG_FILE="$HISTORY_DIR/config.json"
 HISTORY_FILE="$HISTORY_DIR/history.json"
 DEFAULT_MODEL="qwen/qwen3.6-27b"
-SEARCH_MODEL="${GROQ_SEARCH_MODEL:-compound-beta}"
+SEARCH_MODEL="${GROQ_SEARCH_MODEL:-groq/compound-mini}"
 API_BASE="https://api.groq.com/openai/v1"
 CONTEXT_THRESHOLD=80000   # chars (~20K tokens)
 EXPIRY_SECONDS=10800      # 3 hours
@@ -446,7 +446,7 @@ send_query() {
             case "$first_line" in
                 data:*)
                     ( printf '%s\n' "$first_line"; cat ) \
-                    | sed -nu '/^data: \[DONE\]/d; s/^data: //; p' \
+                    | sed -nu '/^data: \[DONE\]/d; s/^data: //p' \
                     | jq -n -j --unbuffered 'foreach inputs as $line ({thinking: false, started: false, buf: "", out: "", stop: false}; (( $line.choices[0].delta.content // $line.error.message // "" ) as $c | .buf += $c | .out = "" | .stop = false | until(.stop; if .thinking then if (.buf | contains("</think>")) then (.buf | index("</think>")) as $idx | .thinking = false | .buf = .buf[$idx + 8:] elif (.buf | contains("</reasoning>")) then (.buf | index("</reasoning>")) as $idx | .thinking = false | .buf = .buf[$idx + 12:] else .stop = true end else if (.buf | contains("<think>")) then (.buf | index("<think>")) as $idx | .thinking = true | .buf = .buf[$idx + 7:] elif (.buf | contains("<reasoning>")) then (.buf | index("<reasoning>")) as $idx | .thinking = true | .buf = .buf[$idx + 11:] else if (.buf | contains("<")) then (.buf | index("<")) as $idx | if $idx > 0 then .out += .buf[:$idx] | .buf = .buf[$idx:] elif (.buf | length > 12) then .out += "<" | .buf = .buf[1:] else .stop = true end else .out += .buf | .buf = "" | .stop = true end end end) | if .out != "" and (.started | not) then ((.out | sub("^[ \\n\\r\\t]+"; "")) as $s | if $s != "" then .started = true | .out = $s else .out = "" end) else . end); .out)'
                     ;;
                 *)
